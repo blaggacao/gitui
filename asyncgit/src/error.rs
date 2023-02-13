@@ -84,6 +84,14 @@ pub enum Error {
 	///
 	#[error("not on a branch")]
 	NoBranch,
+
+	///
+	#[error("sign builder error: {0}")]
+	SignBuilder(#[from] crate::sync::sign::SignBuilderError),
+
+	///
+	#[error("sign error: {0}")]
+	Sign(#[from] crate::sync::sign::SignError),
 }
 
 ///

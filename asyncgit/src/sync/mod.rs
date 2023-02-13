@@ -24,6 +24,7 @@ pub mod remotes;
 mod repository;
 mod reset;
 mod reword;
+pub mod sign;
 mod staging;
 mod stash;
 mod state;
