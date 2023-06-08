@@ -118,6 +118,12 @@ sudo emerge --sync dm9pZCAq
 sudo emerge dev-vcs/gitui::dm9pZCAq
 ```
 
+### [openSUSE](https://software.opensuse.org/package/gitui) (Tumbleweed)
+
+```sh
+sudo zypper install gitui
+```
+
 ### Homebrew (macOS)
 
 ```sh
@@ -171,16 +177,38 @@ pkg install gitui
 
 Binaries available for:
 
-- Linux
-- macOS
-- Windows
+### Linux
+
+- gitui-linux-musl.tar.gz (linux on x86_64)
+- gitui-linux-aarch64.tar.gz (linux on 64 bit arm)
+- gitui-linux-arm.tar.gz
+- gitui-linux-armv7.tar.gz
+
+All contain a single binary file
+
+### macOS
+
+- gitui-mac.tar.gz (intel Mac, uses Rosetta on Apple silicon, single binary)
+
+
+### Windows
+
+- gitui-win.tar.gz (single 64bit binary)
+- gitui.msi (64bit Installer package)
+
 
 ## 7. <a name="build"></a> Build <small><sup>[Top ▲](#table-of-contents)</sup></small>
 
 ### Requirements
 
-- Minimum supported `rust`/`cargo` version: `1.64`
+- Minimum supported `rust`/`cargo` version: `1.65`
   - See [Install Rust](https://www.rust-lang.org/tools/install)
+
+- To build openssl dependency (see https://docs.rs/openssl/latest/openssl/)
+  - perl >= 5.12 (strawberry perl works for windows https://strawberryperl.com/) 
+  - a c compiler (msvc, gcc or clang, cargo will find it)
+
+- To run the complete test suite python is required (and it must be invokable as `python`)
 
 ### Cargo Install
 

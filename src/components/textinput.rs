@@ -13,8 +13,7 @@ use crate::{
 use anyhow::Result;
 use crossterm::event::{Event, KeyCode, KeyModifiers};
 use itertools::Itertools;
-use std::{cell::Cell, collections::HashMap, ops::Range};
-use tui::{
+use ratatui::{
 	backend::Backend,
 	layout::{Alignment, Rect},
 	style::Modifier,
@@ -22,6 +21,7 @@ use tui::{
 	widgets::{Clear, Paragraph},
 	Frame,
 };
+use std::{cell::Cell, collections::HashMap, ops::Range};
 
 #[derive(PartialEq, Eq)]
 pub enum InputType {
@@ -251,7 +251,7 @@ impl TextInputComponent {
 
 		let cursor_highlighting = {
 			let mut h = HashMap::with_capacity(2);
-			h.insert("\n", "\u{21b5}\n\r");
+			h.insert("\n", "\u{21b5}\r\n\n");
 			h.insert(" ", symbol::WHITESPACE);
 			h
 		};
@@ -523,7 +523,7 @@ impl Component for TextInputComponent {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use tui::{style::Style, text::Span};
+	use ratatui::{style::Style, text::Span};
 
 	#[test]
 	fn test_smoke() {

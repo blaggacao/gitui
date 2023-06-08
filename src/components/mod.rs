@@ -1,4 +1,5 @@
 mod blame_file;
+mod branch_find_popup;
 mod branchlist;
 mod changes;
 mod command;
@@ -36,6 +37,7 @@ mod utils;
 
 pub use self::status_tree::StatusTreeComponent;
 pub use blame_file::{BlameFileComponent, BlameFileOpen};
+pub use branch_find_popup::BranchFindPopup;
 pub use branchlist::BranchListComponent;
 pub use changes::ChangesComponent;
 pub use command::{CommandInfo, CommandText};
@@ -72,14 +74,14 @@ pub use utils::filetree::FileTreeItemKind;
 use crate::ui::style::Theme;
 use anyhow::Result;
 use crossterm::event::Event;
-use std::convert::From;
-use tui::{
+use ratatui::{
 	backend::Backend,
 	layout::{Alignment, Rect},
 	text::{Span, Text},
 	widgets::{Block, BorderType, Borders, Paragraph, Wrap},
 	Frame,
 };
+use std::convert::From;
 
 /// creates accessors for a list of components
 ///
