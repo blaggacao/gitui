@@ -1,21 +1,15 @@
 use std::path::Path;
 
 use crate::{
+	app::Environment,
 	components::{
 		visibility_blocking, CommandBlocking, CommandInfo, Component,
 		DrawableComponent, EventState, RevisionFilesComponent,
 	},
-	keys::SharedKeyConfig,
-	queue::Queue,
-	ui::style::SharedTheme,
-	AsyncAppNotification, AsyncNotification,
+	AsyncNotification,
 };
 use anyhow::Result;
-use asyncgit::{
-	sync::{self, RepoPathRef},
-	AsyncGitNotification,
-};
-use crossbeam_channel::Sender;
+use asyncgit::sync::{self, RepoPathRef};
 
 pub struct FilesTab {
 	repo: RepoPathRef,
@@ -25,25 +19,11 @@ pub struct FilesTab {
 
 impl FilesTab {
 	///
-	pub fn new(
-		repo: RepoPathRef,
-		sender: &Sender<AsyncAppNotification>,
-		sender_git: Sender<AsyncGitNotification>,
-		queue: &Queue,
-		theme: SharedTheme,
-		key_config: SharedKeyConfig,
-	) -> Self {
+	pub fn new(env: &Environment) -> Self {
 		Self {
 			visible: false,
-			files: RevisionFilesComponent::new(
-				repo.clone(),
-				queue,
-				sender,
-				sender_git,
-				theme,
-				key_config,
-			),
-			repo,
+			files: RevisionFilesComponent::new(env),
+			repo: env.repo.clone(),
 		}
 	}
 
@@ -81,9 +61,9 @@ impl FilesTab {
 }
 
 impl DrawableComponent for FilesTab {
-	fn draw<B: ratatui::backend::Backend>(
+	fn draw(
 		&self,
-		f: &mut ratatui::Frame<B>,
+		f: &mut ratatui::Frame,
 		rect: ratatui::layout::Rect,
 	) -> Result<()> {
 		if self.is_visible() {

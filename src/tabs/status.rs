@@ -1,5 +1,6 @@
 use crate::{
 	accessors,
+	app::Environment,
 	components::{
 		command_pump, event_pump, visibility_blocking,
 		ChangesComponent, CommandBlocking, CommandInfo, Component,
@@ -10,20 +11,18 @@ use crate::{
 	options::SharedOptions,
 	queue::{Action, InternalEvent, NeedsUpdate, Queue, ResetItem},
 	strings, try_or_popup,
-	ui::style::SharedTheme,
+	ui::style::Theme,
 };
 use anyhow::Result;
 use asyncgit::{
-	asyncjob::AsyncSingleJob,
 	cached,
 	sync::{
 		self, status::StatusType, RepoPath, RepoPathRef, RepoState,
 	},
 	sync::{BranchCompare, CommitId},
-	AsyncBranchesJob, AsyncDiff, AsyncGitNotification, AsyncStatus,
-	DiffParams, DiffType, PushType, StatusItem, StatusParams,
+	AsyncDiff, AsyncGitNotification, AsyncStatus, DiffParams,
+	DiffType, PushType, StatusItem, StatusParams,
 };
-use crossbeam_channel::Sender;
 use crossterm::event::Event;
 use itertools::Itertools;
 use ratatui::{
@@ -31,7 +30,6 @@ use ratatui::{
 	style::{Color, Style},
 	widgets::{Block, BorderType, Borders, Paragraph},
 };
-use std::convert::Into;
 
 /// what part of the screen is focused
 #[derive(PartialEq)]
@@ -74,7 +72,6 @@ pub struct Status {
 	git_status_stage: AsyncStatus,
 	git_branch_state: Option<BranchCompare>,
 	git_branch_name: cached::BranchName,
-	git_branches: AsyncSingleJob<AsyncBranchesJob>,
 	queue: Queue,
 	git_action_executed: bool,
 	options: SharedOptions,
@@ -82,9 +79,9 @@ pub struct Status {
 }
 
 impl DrawableComponent for Status {
-	fn draw<B: ratatui::backend::Backend>(
+	fn draw(
 		&self,
-		f: &mut ratatui::Frame<B>,
+		f: &mut ratatui::Frame,
 		rect: ratatui::layout::Rect,
 	) -> Result<()> {
 		let repo_unclean = self.repo_state_unclean();
@@ -153,71 +150,54 @@ impl Status {
 	accessors!(self, [index, index_wd, diff]);
 
 	///
-	pub fn new(
-		repo: RepoPathRef,
-		queue: &Queue,
-		sender: &Sender<AsyncGitNotification>,
-		theme: SharedTheme,
-		key_config: SharedKeyConfig,
-		options: SharedOptions,
-	) -> Self {
-		let repo_clone = repo.borrow().clone();
+	pub fn new(env: &Environment) -> Self {
+		let repo_clone = env.repo.borrow().clone();
 		Self {
-			queue: queue.clone(),
+			queue: env.queue.clone(),
 			visible: true,
 			has_remotes: false,
 			git_state: RepoState::Clean,
 			focus: Focus::WorkDir,
 			diff_target: DiffTarget::WorkingDir,
 			index_wd: ChangesComponent::new(
-				repo.clone(),
-				&strings::title_status(&key_config),
+				env,
+				&strings::title_status(&env.key_config),
 				true,
 				true,
-				queue.clone(),
-				theme.clone(),
-				key_config.clone(),
-				options.clone(),
 			),
 			index: ChangesComponent::new(
-				repo.clone(),
-				&strings::title_index(&key_config),
+				env,
+				&strings::title_index(&env.key_config),
 				false,
-				false,
-				queue.clone(),
-				theme.clone(),
-				key_config.clone(),
-				options.clone(),
-			),
-			diff: DiffComponent::new(
-				repo.clone(),
-				queue.clone(),
-				theme,
-				key_config.clone(),
 				false,
 			),
-			git_diff: AsyncDiff::new(repo_clone.clone(), sender),
+			diff: DiffComponent::new(env, false),
+			git_diff: AsyncDiff::new(
+				repo_clone.clone(),
+				&env.sender_git,
+			),
 			git_status_workdir: AsyncStatus::new(
 				repo_clone.clone(),
-				sender.clone(),
+				env.sender_git.clone(),
 			),
 			git_status_stage: AsyncStatus::new(
 				repo_clone,
-				sender.clone(),
+				env.sender_git.clone(),
 			),
-			git_branches: AsyncSingleJob::new(sender.clone()),
 			git_action_executed: false,
 			git_branch_state: None,
-			git_branch_name: cached::BranchName::new(repo.clone()),
-			key_config,
-			options,
-			repo,
+			git_branch_name: cached::BranchName::new(
+				env.repo.clone(),
+			),
+			key_config: env.key_config.clone(),
+			options: env.options.clone(),
+			repo: env.repo.clone(),
 		}
 	}
 
-	fn draw_branch_state<B: ratatui::backend::Backend>(
+	fn draw_branch_state(
 		&self,
-		f: &mut ratatui::Frame<B>,
+		f: &mut ratatui::Frame,
 		chunks: &[ratatui::layout::Rect],
 	) {
 		if let Some(branch_name) = self.git_branch_name.last() {
@@ -296,9 +276,9 @@ impl Status {
 		}
 	}
 
-	fn draw_repo_state<B: ratatui::backend::Backend>(
+	fn draw_repo_state(
 		&self,
-		f: &mut ratatui::Frame<B>,
+		f: &mut ratatui::Frame,
 		r: ratatui::layout::Rect,
 	) {
 		if self.git_state != RepoState::Clean {
@@ -312,9 +292,7 @@ impl Status {
 					Block::default()
 						.border_type(BorderType::Plain)
 						.borders(Borders::all())
-						.border_style(
-							Style::default().fg(Color::Yellow),
-						)
+						.border_style(Theme::attention_block())
 						.title(format!(
 							"Pending {:?}",
 							self.git_state
@@ -333,8 +311,8 @@ impl Status {
 
 	fn can_focus_diff(&self) -> bool {
 		match self.focus {
-			Focus::WorkDir => self.index_wd.is_file_seleted(),
-			Focus::Stage => self.index.is_file_seleted(),
+			Focus::WorkDir => self.index_wd.is_file_selected(),
+			Focus::Stage => self.index.is_file_selected(),
 			Focus::Diff => false,
 		}
 	}
@@ -426,22 +404,12 @@ impl Status {
 		self.git_diff.is_pending()
 			|| self.git_status_stage.is_pending()
 			|| self.git_status_workdir.is_pending()
-			|| self.git_branches.is_pending()
 	}
 
 	fn check_remotes(&mut self) {
-		self.has_remotes = false;
-
-		if let Some(result) = self.git_branches.take_last() {
-			if let Some(Ok(branches)) = result.result() {
-				self.has_remotes = !branches.is_empty();
-			}
-		} else {
-			self.git_branches.spawn(AsyncBranchesJob::new(
-				self.repo.borrow().clone(),
-				false,
-			));
-		}
+		self.has_remotes =
+			sync::get_default_remote(&self.repo.borrow().clone())
+				.is_ok();
 	}
 
 	///
@@ -449,6 +417,10 @@ impl Status {
 		&mut self,
 		ev: AsyncGitNotification,
 	) -> Result<()> {
+		if !self.is_visible() {
+			return Ok(());
+		}
+
 		match ev {
 			AsyncGitNotification::Diff => self.update_diff()?,
 			AsyncGitNotification::Status => self.update_status()?,
@@ -607,11 +579,8 @@ impl Status {
 	}
 
 	fn undo_last_commit(&self) {
-		try_or_popup!(
-			self,
-			"undo commit failed:",
-			sync::utils::undo_last_commit(&self.repo.borrow())
-		);
+		self.queue
+			.push(InternalEvent::ConfirmAction(Action::UndoCommit));
 	}
 
 	fn branch_compare(&mut self) {
@@ -626,10 +595,12 @@ impl Status {
 	}
 
 	fn can_push(&self) -> bool {
-		self.git_branch_state
+		let is_ahead = self
+			.git_branch_state
 			.as_ref()
-			.map_or(true, |state| state.ahead > 0)
-			&& self.has_remotes
+			.map_or(true, |state| state.ahead > 0);
+
+		is_ahead && self.has_remotes
 	}
 
 	const fn can_pull(&self) -> bool {

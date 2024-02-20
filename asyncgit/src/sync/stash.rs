@@ -14,24 +14,13 @@ pub fn get_stashes(repo_path: &RepoPath) -> Result<Vec<CommitId>> {
 	scope_time!("get_stashes");
 
 	let mut repo = repo(repo_path)?;
-
 	let mut list = Vec::new();
-
 	repo.stash_foreach(|_index, _msg, id| {
 		list.push((*id).into());
 		true
 	})?;
 
 	Ok(list)
-}
-
-/// checks whether a given commit is a stash commit.
-pub fn is_stash_commit(
-	repo_path: &RepoPath,
-	id: &CommitId,
-) -> Result<bool> {
-	let stashes = get_stashes(repo_path)?;
-	Ok(stashes.contains(id))
 }
 
 ///
@@ -224,7 +213,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_stash_without_2nd_parent() -> Result<()> {
+	fn test_stash_without_second_parent() -> Result<()> {
 		let file_path1 = Path::new("file1.txt");
 		let (_td, repo) = repo_init()?;
 		let root = repo.path().parent().unwrap();

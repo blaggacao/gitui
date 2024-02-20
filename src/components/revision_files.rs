@@ -1,15 +1,17 @@
 use super::{
-	utils::scroll_vertical::VerticalScroll, BlameFileOpen,
-	CommandBlocking, CommandInfo, Component, DrawableComponent,
-	EventState, FileRevOpen, FuzzyFinderTarget, SyntaxTextComponent,
+	utils::scroll_vertical::VerticalScroll, CommandBlocking,
+	CommandInfo, Component, DrawableComponent, EventState,
+	FuzzyFinderTarget, SyntaxTextComponent,
 };
 use crate::{
+	app::Environment,
 	keys::{key_match, SharedKeyConfig},
+	popups::{BlameFileOpen, FileRevOpen},
 	queue::{InternalEvent, Queue, StackablePopupOpen},
 	strings::{self, order, symbol},
 	try_or_popup,
 	ui::{self, common_nav, style::SharedTheme},
-	AsyncAppNotification, AsyncNotification,
+	AsyncNotification,
 };
 use anyhow::Result;
 use asyncgit::{
@@ -19,18 +21,16 @@ use asyncgit::{
 	},
 	AsyncGitNotification, AsyncTreeFilesJob,
 };
-use crossbeam_channel::Sender;
 use crossterm::event::Event;
 use filetreelist::{FileTree, FileTreeItem};
 use ratatui::{
-	backend::Backend,
 	layout::{Constraint, Direction, Layout, Rect},
 	text::Span,
 	widgets::{Block, Borders},
 	Frame,
 };
 use std::{borrow::Cow, fmt::Write};
-use std::{collections::BTreeSet, convert::From, path::Path};
+use std::{collections::BTreeSet, path::Path};
 use unicode_truncate::UnicodeTruncateStr;
 use unicode_width::UnicodeWidthStr;
 
@@ -57,31 +57,21 @@ pub struct RevisionFilesComponent {
 
 impl RevisionFilesComponent {
 	///
-	pub fn new(
-		repo: RepoPathRef,
-		queue: &Queue,
-		sender: &Sender<AsyncAppNotification>,
-		sender_git: Sender<AsyncGitNotification>,
-		theme: SharedTheme,
-		key_config: SharedKeyConfig,
-	) -> Self {
+	pub fn new(env: &Environment) -> Self {
 		Self {
-			queue: queue.clone(),
+			queue: env.queue.clone(),
 			tree: FileTree::default(),
 			scroll: VerticalScroll::new(),
-			current_file: SyntaxTextComponent::new(
-				repo.clone(),
-				sender,
-				key_config.clone(),
-				theme.clone(),
-			),
-			async_treefiles: AsyncSingleJob::new(sender_git),
-			theme,
+			current_file: SyntaxTextComponent::new(env),
+			theme: env.theme.clone(),
 			files: None,
+			async_treefiles: AsyncSingleJob::new(
+				env.sender_git.clone(),
+			),
 			revision: None,
 			focus: Focus::Tree,
-			key_config,
-			repo,
+			key_config: env.key_config.clone(),
+			repo: env.repo.clone(),
 			visible: false,
 		}
 	}
@@ -135,8 +125,7 @@ impl RevisionFilesComponent {
 				if self
 					.revision
 					.as_ref()
-					.map(|commit| commit.id == result.commit)
-					.unwrap_or_default()
+					.is_some_and(|commit| commit.id == result.commit)
 				{
 					if let Ok(last) = result.result {
 						let filenames: Vec<&Path> = last
@@ -287,11 +276,7 @@ impl RevisionFilesComponent {
 		}
 	}
 
-	fn draw_tree<B: Backend>(
-		&self,
-		f: &mut Frame<B>,
-		area: Rect,
-	) -> Result<()> {
+	fn draw_tree(&self, f: &mut Frame, area: Rect) -> Result<()> {
 		let tree_height = usize::from(area.height.saturating_sub(2));
 		let tree_width = usize::from(area.width);
 
@@ -399,11 +384,7 @@ impl RevisionFilesComponent {
 }
 
 impl DrawableComponent for RevisionFilesComponent {
-	fn draw<B: Backend>(
-		&self,
-		f: &mut Frame<B>,
-		area: Rect,
-	) -> Result<()> {
+	fn draw(&self, f: &mut Frame, area: Rect) -> Result<()> {
 		if self.is_visible() {
 			let chunks = Layout::default()
 				.direction(Direction::Horizontal)

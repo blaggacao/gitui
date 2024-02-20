@@ -1,12 +1,17 @@
 //! sync git api for fetching a diff
 
 use super::{
-	commit_files::{get_commit_diff, get_compare_commits_diff},
+	commit_files::{
+		get_commit_diff, get_compare_commits_diff, OldNew,
+	},
 	utils::{get_head_repo, work_dir},
 	CommitId, RepoPath,
 };
 use crate::{
-	error::Error, error::Result, hash, sync::repository::repo,
+	error::Error,
+	error::Result,
+	hash,
+	sync::{get_stashes, repository::repo},
 };
 use easy_cast::Conv;
 use git2::{
@@ -223,8 +228,13 @@ pub fn get_diff_commit(
 
 	let repo = repo(repo_path)?;
 	let work_dir = work_dir(&repo)?;
-	let diff =
-		get_commit_diff(repo_path, &repo, id, Some(p), options)?;
+	let diff = get_commit_diff(
+		&repo,
+		id,
+		Some(p),
+		options,
+		Some(&get_stashes(repo_path)?.into_iter().collect()),
+	)?;
 
 	raw_diff_to_file_diff(&diff, work_dir)
 }
@@ -232,7 +242,7 @@ pub fn get_diff_commit(
 /// get file changes of a diff between two commits
 pub fn get_diff_commits(
 	repo_path: &RepoPath,
-	ids: (CommitId, CommitId),
+	ids: OldNew<CommitId>,
 	p: String,
 	options: Option<DiffOptions>,
 ) -> Result<FileDiff> {
@@ -240,12 +250,8 @@ pub fn get_diff_commits(
 
 	let repo = repo(repo_path)?;
 	let work_dir = work_dir(&repo)?;
-	let diff = get_compare_commits_diff(
-		&repo,
-		(ids.0, ids.1),
-		Some(p),
-		options,
-	)?;
+	let diff =
+		get_compare_commits_diff(&repo, ids, Some(p), options)?;
 
 	raw_diff_to_file_diff(&diff, work_dir)
 }

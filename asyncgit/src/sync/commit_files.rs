@@ -1,14 +1,44 @@
 //! Functions for getting infos about files in commits
 
-use super::{
-	diff::DiffOptions, stash::is_stash_commit, CommitId, RepoPath,
-};
+use super::{diff::DiffOptions, CommitId, RepoPath};
 use crate::{
-	error::Result, sync::repository::repo, StatusItem, StatusItemType,
+	error::Result,
+	sync::{get_stashes, repository::repo},
+	StatusItem, StatusItemType,
 };
 use git2::{Diff, Repository};
 use scopetime::scope_time;
-use std::cmp::Ordering;
+use std::collections::HashSet;
+
+/// struct containing a new and an old version
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct OldNew<T> {
+	/// The old version
+	pub old: T,
+	/// The new version
+	pub new: T,
+}
+
+/// Sort two commits.
+pub fn sort_commits(
+	repo: &Repository,
+	commits: (CommitId, CommitId),
+) -> Result<OldNew<CommitId>> {
+	if repo.graph_descendant_of(
+		commits.0.get_oid(),
+		commits.1.get_oid(),
+	)? {
+		Ok(OldNew {
+			old: commits.1,
+			new: commits.0,
+		})
+	} else {
+		Ok(OldNew {
+			old: commits.0,
+			new: commits.1,
+		})
+	}
+}
 
 /// get all files that are part of a commit
 pub fn get_commit_files(
@@ -21,9 +51,20 @@ pub fn get_commit_files(
 	let repo = repo(repo_path)?;
 
 	let diff = if let Some(other) = other {
-		get_compare_commits_diff(&repo, (id, other), None, None)?
+		get_compare_commits_diff(
+			&repo,
+			sort_commits(&repo, (id, other))?,
+			None,
+			None,
+		)?
 	} else {
-		get_commit_diff(repo_path, &repo, id, None, None)?
+		get_commit_diff(
+			&repo,
+			id,
+			None,
+			None,
+			Some(&get_stashes(repo_path)?.into_iter().collect()),
+		)?
 	};
 
 	let res = diff
@@ -49,26 +90,20 @@ pub fn get_commit_files(
 #[allow(clippy::needless_pass_by_value)]
 pub fn get_compare_commits_diff(
 	repo: &Repository,
-	ids: (CommitId, CommitId),
+	ids: OldNew<CommitId>,
 	pathspec: Option<String>,
 	options: Option<DiffOptions>,
 ) -> Result<Diff<'_>> {
 	// scope_time!("get_compare_commits_diff");
-
-	let commits = (
-		repo.find_commit(ids.0.into())?,
-		repo.find_commit(ids.1.into())?,
-	);
-
-	let commits = if commits.0.time().cmp(&commits.1.time())
-		== Ordering::Greater
-	{
-		(commits.1, commits.0)
-	} else {
-		commits
+	let commits = OldNew {
+		old: repo.find_commit(ids.old.into())?,
+		new: repo.find_commit(ids.new.into())?,
 	};
 
-	let trees = (commits.0.tree()?, commits.1.tree()?);
+	let trees = OldNew {
+		old: commits.old.tree()?,
+		new: commits.new.tree()?,
+	};
 
 	let mut opts = git2::DiffOptions::new();
 	if let Some(options) = options {
@@ -79,11 +114,10 @@ pub fn get_compare_commits_diff(
 	if let Some(p) = &pathspec {
 		opts.pathspec(p.clone());
 	}
-	opts.show_binary(true);
 
-	let diff = repo.diff_tree_to_tree(
-		Some(&trees.0),
-		Some(&trees.1),
+	let diff: Diff<'_> = repo.diff_tree_to_tree(
+		Some(&trees.old),
+		Some(&trees.new),
 		Some(&mut opts),
 	)?;
 
@@ -91,12 +125,12 @@ pub fn get_compare_commits_diff(
 }
 
 /// get diff of a commit to its first parent
-pub fn get_commit_diff<'a>(
-	repo_path: &RepoPath,
+pub(crate) fn get_commit_diff<'a>(
 	repo: &'a Repository,
 	id: CommitId,
 	pathspec: Option<String>,
 	options: Option<DiffOptions>,
+	stashes: Option<&HashSet<CommitId>>,
 ) -> Result<Diff<'a>> {
 	// scope_time!("get_commit_diff");
 
@@ -128,14 +162,14 @@ pub fn get_commit_diff<'a>(
 		Some(&mut opts),
 	)?;
 
-	if is_stash_commit(repo_path, &id)? {
+	if stashes.is_some_and(|stashes| stashes.contains(&id)) {
 		if let Ok(untracked_commit) = commit.parent_id(2) {
 			let untracked_diff = get_commit_diff(
-				repo_path,
 				repo,
 				CommitId::new(untracked_commit),
 				pathspec,
 				options,
+				stashes,
 			)?;
 
 			diff.merge(&untracked_diff)?;

@@ -38,7 +38,7 @@ mod keys;
 mod notify_mutex;
 mod options;
 mod popup_stack;
-mod profiler;
+mod popups;
 mod queue;
 mod spinner;
 mod string_utils;
@@ -66,22 +66,20 @@ use crossterm::{
 };
 use input::{Input, InputEvent, InputState};
 use keys::KeyConfig;
-use profiler::Profiler;
-use ratatui::{
-	backend::{Backend, CrosstermBackend},
-	Terminal,
-};
+use ratatui::backend::CrosstermBackend;
 use scopeguard::defer;
 use scopetime::scope_time;
 use spinner::Spinner;
 use std::{
 	cell::RefCell,
-	io::{self, Write},
+	io::{self, Stdout},
 	panic, process,
 	time::{Duration, Instant},
 };
 use ui::style::Theme;
 use watcher::RepoWatcher;
+
+type Terminal = ratatui::Terminal<CrosstermBackend<io::Stdout>>;
 
 static TICK_INTERVAL: Duration = Duration::from_secs(5);
 static SPINNER_INTERVAL: Duration = Duration::from_millis(80);
@@ -127,8 +125,6 @@ fn main() -> Result<()> {
 
 	let cliargs = process_cmdline()?;
 
-	let _profiler = Profiler::new();
-
 	asyncgit::register_tracing_logging();
 
 	if !valid_path(&cliargs.repo_path) {
@@ -138,9 +134,7 @@ fn main() -> Result<()> {
 	let key_config = KeyConfig::init()
 		.map_err(|e| eprintln!("KeyConfig loading error: {e}"))
 		.unwrap_or_default();
-	let theme = Theme::init(&cliargs.theme)
-		.map_err(|e| eprintln!("Theme loading error: {e}"))
-		.unwrap_or_default();
+	let theme = Theme::init(&cliargs.theme);
 
 	setup_terminal()?;
 	defer! {
@@ -163,7 +157,7 @@ fn main() -> Result<()> {
 		let quit_state = run_app(
 			app_start,
 			repo_path.clone(),
-			theme,
+			theme.clone(),
 			key_config.clone(),
 			&input,
 			updater,
@@ -188,7 +182,7 @@ fn run_app(
 	key_config: KeyConfig,
 	input: &Input,
 	updater: Updater,
-	terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+	terminal: &mut Terminal,
 ) -> Result<QuitState, anyhow::Error> {
 	let (tx_git, rx_git) = unbounded();
 	let (tx_app, rx_app) = unbounded();
@@ -209,8 +203,8 @@ fn run_app(
 
 	let mut app = App::new(
 		RefCell::new(repo),
-		&tx_git,
-		&tx_app,
+		tx_git,
+		tx_app,
 		input.clone(),
 		theme,
 		key_config,
@@ -307,10 +301,7 @@ fn shutdown_terminal() {
 	}
 }
 
-fn draw<B: Backend>(
-	terminal: &mut Terminal<B>,
-	app: &App,
-) -> io::Result<()> {
+fn draw(terminal: &mut Terminal, app: &App) -> io::Result<()> {
 	if app.requires_redraw() {
 		terminal.resize(terminal.size()?)?;
 	}
@@ -325,7 +316,11 @@ fn draw<B: Backend>(
 }
 
 fn valid_path(repo_path: &RepoPath) -> bool {
-	asyncgit::sync::is_repo(repo_path)
+	let error = asyncgit::sync::repo_open_error(repo_path);
+	if let Some(error) = &error {
+		eprintln!("repo open error: {error}");
+	}
+	error.is_none()
 }
 
 fn select_event(
@@ -357,7 +352,7 @@ fn select_event(
 			QueueEvent::AsyncEvent(AsyncNotification::App(e))
 		}),
 		3 => oper.recv(rx_ticker).map(|_| QueueEvent::Notify),
-		4 => oper.recv(rx_notify).map(|_| QueueEvent::Notify),
+		4 => oper.recv(rx_notify).map(|()| QueueEvent::Notify),
 		5 => oper.recv(rx_spinner).map(|_| QueueEvent::SpinnerUpdate),
 		_ => bail!("unknown select source"),
 	}?;
@@ -365,9 +360,7 @@ fn select_event(
 	Ok(ev)
 }
 
-fn start_terminal<W: Write>(
-	buf: W,
-) -> io::Result<Terminal<CrosstermBackend<W>>> {
+fn start_terminal(buf: Stdout) -> io::Result<Terminal> {
 	let backend = CrosstermBackend::new(buf);
 	let mut terminal = Terminal::new(backend)?;
 	terminal.hide_cursor()?;
@@ -388,16 +381,16 @@ fn set_panic_handlers() -> Result<()> {
 	// regular panic handler
 	panic::set_hook(Box::new(|e| {
 		let backtrace = Backtrace::new();
-		log_eprintln!("panic: {:?}\ntrace:\n{:?}", e, backtrace);
 		shutdown_terminal();
+		log_eprintln!("\nGitUI was close due to an unexpected panic.\nPlease file an issue on https://github.com/extrawurst/gitui/issues with the following info:\n\n{:?}\ntrace:\n{:?}", e, backtrace);
 	}));
 
 	// global threadpool
 	rayon_core::ThreadPoolBuilder::new()
 		.panic_handler(|e| {
 			let backtrace = Backtrace::new();
-			log_eprintln!("panic: {:?}\ntrace:\n{:?}", e, backtrace);
 			shutdown_terminal();
+			log_eprintln!("\nGitUI was close due to an unexpected panic.\nPlease file an issue on https://github.com/extrawurst/gitui/issues with the following info:\n\n{:?}\ntrace:\n{:?}", e, backtrace);
 			process::abort();
 		})
 		.num_threads(4)

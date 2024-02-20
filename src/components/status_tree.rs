@@ -3,21 +3,22 @@ use super::{
 		filetree::{FileTreeItem, FileTreeItemKind},
 		statustree::{MoveSelection, StatusTree},
 	},
-	BlameFileOpen, CommandBlocking, DrawableComponent, FileRevOpen,
+	CommandBlocking, DrawableComponent,
 };
 use crate::{
+	app::Environment,
 	components::{CommandInfo, Component, EventState},
 	keys::{key_match, SharedKeyConfig},
+	popups::{BlameFileOpen, FileRevOpen},
 	queue::{InternalEvent, NeedsUpdate, Queue, StackablePopupOpen},
 	strings::{self, order},
-	ui,
-	ui::style::SharedTheme,
+	ui::{self, style::SharedTheme},
 };
 use anyhow::Result;
 use asyncgit::{hash, sync::CommitId, StatusItem, StatusItemType};
 use crossterm::event::Event;
-use ratatui::{backend::Backend, layout::Rect, text::Span, Frame};
-use std::{borrow::Cow, cell::Cell, convert::From, path::Path};
+use ratatui::{layout::Rect, text::Span, Frame};
+use std::{borrow::Cow, cell::Cell, path::Path};
 
 //TODO: use new `filetreelist` crate
 
@@ -30,7 +31,7 @@ pub struct StatusTreeComponent {
 	current_hash: u64,
 	focused: bool,
 	show_selection: bool,
-	queue: Option<Queue>,
+	queue: Queue,
 	theme: SharedTheme,
 	key_config: SharedKeyConfig,
 	scroll_top: Cell<usize>,
@@ -40,22 +41,16 @@ pub struct StatusTreeComponent {
 
 impl StatusTreeComponent {
 	///
-	pub fn new(
-		title: &str,
-		focus: bool,
-		queue: Option<Queue>,
-		theme: SharedTheme,
-		key_config: SharedKeyConfig,
-	) -> Self {
+	pub fn new(env: &Environment, title: &str, focus: bool) -> Self {
 		Self {
 			title: title.to_string(),
 			tree: StatusTree::default(),
 			current_hash: 0,
 			focused: focus,
 			show_selection: focus,
-			queue,
-			theme,
-			key_config,
+			queue: env.queue.clone(),
+			theme: env.theme.clone(),
+			key_config: env.key_config.clone(),
 			scroll_top: Cell::new(0),
 			pending: true,
 			visible: false,
@@ -124,7 +119,7 @@ impl StatusTreeComponent {
 	}
 
 	///
-	pub fn is_file_seleted(&self) -> bool {
+	pub fn is_file_selected(&self) -> bool {
 		self.tree.selected_item().map_or(false, |item| {
 			match item.kind {
 				FileTreeItemKind::File(_) => true,
@@ -137,9 +132,7 @@ impl StatusTreeComponent {
 		let changed = self.tree.move_selection(dir);
 
 		if changed {
-			if let Some(ref queue) = self.queue {
-				queue.push(InternalEvent::Update(NeedsUpdate::DIFF));
-			}
+			self.queue.push(InternalEvent::Update(NeedsUpdate::DIFF));
 		}
 
 		changed
@@ -309,11 +302,9 @@ impl StatusTreeComponent {
 			if crate::clipboard::copy_string(&item.info.full_path)
 				.is_err()
 			{
-				if let Some(queue) = &self.queue {
-					queue.push(InternalEvent::ShowErrorMsg(
-						strings::POPUP_FAIL_COPY.to_string(),
-					));
-				}
+				self.queue.push(InternalEvent::ShowErrorMsg(
+					strings::POPUP_FAIL_COPY.to_string(),
+				));
 			}
 		}
 	}
@@ -328,11 +319,7 @@ struct TextDrawInfo<'a> {
 }
 
 impl DrawableComponent for StatusTreeComponent {
-	fn draw<B: Backend>(
-		&self,
-		f: &mut Frame<B>,
-		r: Rect,
-	) -> Result<()> {
+	fn draw(&self, f: &mut Frame, r: Rect) -> Result<()> {
 		if !self.is_visible() {
 			return Ok(());
 		}
@@ -463,17 +450,15 @@ impl Component for StatusTreeComponent {
 				return if key_match(e, self.key_config.keys.blame) {
 					if let Some(status_item) = self.selection_file() {
 						self.hide();
-						if let Some(queue) = &self.queue {
-							queue.push(InternalEvent::OpenPopup(
-								StackablePopupOpen::BlameFile(
-									BlameFileOpen {
-										file_path: status_item.path,
-										commit_id: self.revision,
-										selection: None,
-									},
-								),
-							));
-						}
+						self.queue.push(InternalEvent::OpenPopup(
+							StackablePopupOpen::BlameFile(
+								BlameFileOpen {
+									file_path: status_item.path,
+									commit_id: self.revision,
+									selection: None,
+								},
+							),
+						));
 					}
 					Ok(EventState::Consumed)
 				} else if key_match(
@@ -482,27 +467,21 @@ impl Component for StatusTreeComponent {
 				) {
 					if let Some(status_item) = self.selection_file() {
 						self.hide();
-						if let Some(queue) = &self.queue {
-							queue.push(InternalEvent::OpenPopup(
-								StackablePopupOpen::FileRevlog(
-									FileRevOpen::new(
-										status_item.path,
-									),
-								),
-							));
-						}
+						self.queue.push(InternalEvent::OpenPopup(
+							StackablePopupOpen::FileRevlog(
+								FileRevOpen::new(status_item.path),
+							),
+						));
 					}
 					Ok(EventState::Consumed)
 				} else if key_match(e, self.key_config.keys.edit_file)
 				{
 					if let Some(status_item) = self.selection_file() {
-						if let Some(queue) = &self.queue {
-							queue.push(
-								InternalEvent::OpenExternalEditor(
-									Some(status_item.path),
-								),
-							);
-						}
+						self.queue.push(
+							InternalEvent::OpenExternalEditor(Some(
+								status_item.path,
+							)),
+						);
 					}
 					Ok(EventState::Consumed)
 				} else if key_match(e, self.key_config.keys.copy) {
@@ -571,7 +550,6 @@ impl Component for StatusTreeComponent {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use asyncgit::StatusItemType;
 
 	fn string_vec_to_status(items: &[&str]) -> Vec<StatusItem> {
 		items
@@ -607,11 +585,9 @@ mod tests {
 
 		// set up file tree
 		let mut ftc = StatusTreeComponent::new(
+			&Environment::test_env(),
 			"title",
 			true,
-			None,
-			SharedTheme::default(),
-			SharedKeyConfig::default(),
 		);
 		ftc.update(&items)
 			.expect("Updating FileTreeComponent failed");
@@ -649,11 +625,9 @@ mod tests {
 
 		// set up file tree
 		let mut ftc = StatusTreeComponent::new(
+			&Environment::test_env(),
 			"title",
 			true,
-			None,
-			SharedTheme::default(),
-			SharedKeyConfig::default(),
 		);
 		ftc.update(&items)
 			.expect("Updating FileTreeComponent failed");

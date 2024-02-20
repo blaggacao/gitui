@@ -1,9 +1,10 @@
 use anyhow::Result;
 use crossterm::event::Event;
-use ratatui::{backend::Backend, layout::Rect, Frame};
+use ratatui::{layout::Rect, Frame};
 
 use asyncgit::sync::cred::BasicAuthCredential;
 
+use crate::app::Environment;
 use crate::components::{EventState, InputType, TextInputComponent};
 use crate::keys::key_match;
 use crate::{
@@ -13,7 +14,6 @@ use crate::{
 	},
 	keys::SharedKeyConfig,
 	strings,
-	ui::style::SharedTheme,
 };
 
 ///
@@ -27,23 +27,19 @@ pub struct CredComponent {
 
 impl CredComponent {
 	///
-	pub fn new(
-		theme: SharedTheme,
-		key_config: SharedKeyConfig,
-	) -> Self {
+	pub fn new(env: &Environment) -> Self {
+		let key_config = env.key_config.clone();
 		Self {
 			visible: false,
 			input_username: TextInputComponent::new(
-				theme.clone(),
-				key_config.clone(),
+				env,
 				&strings::username_popup_title(&key_config),
 				&strings::username_popup_msg(&key_config),
 				false,
 			)
 			.with_input_type(InputType::Singleline),
 			input_password: TextInputComponent::new(
-				theme,
-				key_config.clone(),
+				env,
 				&strings::password_popup_title(&key_config),
 				&strings::password_popup_msg(&key_config),
 				false,
@@ -64,11 +60,7 @@ impl CredComponent {
 }
 
 impl DrawableComponent for CredComponent {
-	fn draw<B: Backend>(
-		&self,
-		f: &mut Frame<B>,
-		rect: Rect,
-	) -> Result<()> {
+	fn draw(&self, f: &mut Frame, rect: Rect) -> Result<()> {
 		if self.visible {
 			self.input_username.draw(f, rect)?;
 			self.input_password.draw(f, rect)?;

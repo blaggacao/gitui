@@ -1,5 +1,6 @@
 use super::utils::logitems::{ItemBatch, LogEntry};
 use crate::{
+	app::Environment,
 	components::{
 		utils::string_width_align, CommandBlocking, CommandInfo,
 		Component, DrawableComponent, EventState, ScrollType,
@@ -13,33 +14,37 @@ use crate::{
 };
 use anyhow::Result;
 use asyncgit::sync::{
-	checkout_commit, BranchDetails, BranchInfo, CommitId,
+	self, checkout_commit, BranchDetails, BranchInfo, CommitId,
 	RepoPathRef, Tags,
 };
 use chrono::{DateTime, Local};
 use crossterm::event::Event;
+use indexmap::IndexSet;
 use itertools::Itertools;
 use ratatui::{
-	backend::Backend,
 	layout::{Alignment, Rect},
+	style::Style,
 	text::{Line, Span},
 	widgets::{Block, Borders, Paragraph},
 	Frame,
 };
 use std::{
-	borrow::Cow, cell::Cell, cmp, collections::BTreeMap,
-	convert::TryFrom, time::Instant,
+	borrow::Cow, cell::Cell, cmp, collections::BTreeMap, rc::Rc,
+	time::Instant,
 };
 
 const ELEMENTS_PER_LINE: usize = 9;
+const SLICE_SIZE: usize = 1200;
 
 ///
 pub struct CommitList {
 	repo: RepoPathRef,
 	title: Box<str>,
 	selection: usize,
-	count_total: usize,
+	highlighted_selection: Option<usize>,
 	items: ItemBatch,
+	highlights: Option<Rc<IndexSet<CommitId>>>,
+	commits: IndexSet<CommitId>,
 	marked: Vec<(usize, CommitId)>,
 	scroll_state: (Instant, f32),
 	tags: Option<Tags>,
@@ -54,58 +59,26 @@ pub struct CommitList {
 
 impl CommitList {
 	///
-	pub fn new(
-		repo: RepoPathRef,
-		title: &str,
-		theme: SharedTheme,
-		queue: Queue,
-		key_config: SharedKeyConfig,
-	) -> Self {
+	pub fn new(env: &Environment, title: &str) -> Self {
 		Self {
-			repo,
+			repo: env.repo.clone(),
 			items: ItemBatch::default(),
 			marked: Vec::with_capacity(2),
 			selection: 0,
-			count_total: 0,
+			highlighted_selection: None,
+			commits: IndexSet::new(),
+			highlights: None,
 			scroll_state: (Instant::now(), 0_f32),
 			tags: None,
 			local_branches: BTreeMap::default(),
 			remote_branches: BTreeMap::default(),
 			current_size: Cell::new(None),
 			scroll_top: Cell::new(0),
-			theme,
-			queue,
-			key_config,
+			theme: env.theme.clone(),
+			queue: env.queue.clone(),
+			key_config: env.key_config.clone(),
 			title: title.into(),
 		}
-	}
-
-	///
-	pub fn items(&mut self) -> &mut ItemBatch {
-		&mut self.items
-	}
-
-	///
-	pub const fn selection(&self) -> usize {
-		self.selection
-	}
-
-	/// will return view size or None before the first render
-	pub fn current_size(&self) -> Option<(u16, u16)> {
-		self.current_size.get()
-	}
-
-	///
-	pub fn set_count_total(&mut self, total: usize) {
-		self.count_total = total;
-		self.selection =
-			cmp::min(self.selection, self.selection_max());
-	}
-
-	///
-	#[allow(clippy::missing_const_for_fn)]
-	pub fn selection_max(&self) -> usize {
-		self.count_total.saturating_sub(1)
 	}
 
 	///
@@ -116,6 +89,12 @@ impl CommitList {
 	///
 	pub fn clear(&mut self) {
 		self.items.clear();
+		self.commits.clear();
+	}
+
+	///
+	pub fn copy_items(&self) -> Vec<CommitId> {
+		self.commits.iter().copied().collect_vec()
 	}
 
 	///
@@ -128,13 +107,6 @@ impl CommitList {
 		self.items.iter().nth(
 			self.selection.saturating_sub(self.items.index_offset()),
 		)
-	}
-
-	///
-	pub fn selected_entry_marked(&self) -> bool {
-		self.selected_entry()
-			.and_then(|e| self.is_marked(&e.id))
-			.unwrap_or_default()
 	}
 
 	///
@@ -160,9 +132,10 @@ impl CommitList {
 		commits
 	}
 
+	///
 	pub fn copy_commit_hash(&self) -> Result<()> {
 		let marked = self.marked.as_slice();
-		let yank: Option<Cow<str>> = match marked {
+		let yank: Option<String> = match marked {
 			[] => self
 				.items
 				.iter()
@@ -170,29 +143,21 @@ impl CommitList {
 					self.selection
 						.saturating_sub(self.items.index_offset()),
 				)
-				.map(|e| Cow::Borrowed(e.hash_short.as_ref())),
-			[(_idx, commit)] => {
-				Some(commit.get_short_string().into())
-			}
+				.map(|e| e.id.to_string()),
+			[(_idx, commit)] => Some(commit.to_string()),
 			[first, .., last] => {
 				let marked_consecutive =
 					marked.windows(2).all(|w| w[0].0 + 1 == w[1].0);
 
 				let yank = if marked_consecutive {
-					format!(
-						"{}^..{}",
-						first.1.get_short_string(),
-						last.1.get_short_string()
-					)
+					format!("{}^..{}", first.1, last.1)
 				} else {
 					marked
 						.iter()
-						.map(|(_idx, commit)| {
-							commit.get_short_string()
-						})
+						.map(|(_idx, commit)| commit.to_string())
 						.join(" ")
 				};
-				Some(yank.into())
+				Some(yank)
 			}
 		};
 
@@ -205,7 +170,196 @@ impl CommitList {
 		Ok(())
 	}
 
+	///
+	pub fn checkout(&mut self) {
+		if let Some(commit_hash) =
+			self.selected_entry().map(|entry| entry.id)
+		{
+			try_or_popup!(
+				self,
+				"failed to checkout commit:",
+				checkout_commit(&self.repo.borrow(), commit_hash)
+			);
+		}
+	}
+
+	///
+	pub fn set_local_branches(
+		&mut self,
+		local_branches: Vec<BranchInfo>,
+	) {
+		self.local_branches.clear();
+
+		for local_branch in local_branches {
+			self.local_branches
+				.entry(local_branch.top_commit)
+				.or_default()
+				.push(local_branch);
+		}
+	}
+
+	///
+	pub fn set_remote_branches(
+		&mut self,
+		remote_branches: Vec<BranchInfo>,
+	) {
+		self.remote_branches.clear();
+
+		for remote_branch in remote_branches {
+			self.remote_branches
+				.entry(remote_branch.top_commit)
+				.or_default()
+				.push(remote_branch);
+		}
+	}
+
+	///
+	pub fn set_commits(&mut self, commits: IndexSet<CommitId>) {
+		if commits != self.commits {
+			self.items.clear();
+			self.commits = commits;
+			self.fetch_commits(false);
+		}
+	}
+
+	///
+	pub fn refresh_extend_data(&mut self, commits: Vec<CommitId>) {
+		let new_commits = !commits.is_empty();
+		self.commits.extend(commits);
+
+		let selection = self.selection();
+		let selection_max = self.selection_max();
+
+		if self.needs_data(selection, selection_max) || new_commits {
+			self.fetch_commits(false);
+		}
+	}
+
+	///
+	pub fn set_highlighting(
+		&mut self,
+		highlighting: Option<Rc<IndexSet<CommitId>>>,
+	) {
+		//note: set highlights to none if there is no highlight
+		self.highlights = if highlighting
+			.as_ref()
+			.is_some_and(|set| set.is_empty())
+		{
+			None
+		} else {
+			highlighting
+		};
+
+		self.select_next_highlight();
+		self.set_highlighted_selection_index();
+		self.fetch_commits(true);
+	}
+
+	///
+	pub fn select_commit(&mut self, id: CommitId) -> Result<()> {
+		let index = self.commits.get_index_of(&id);
+
+		if let Some(index) = index {
+			self.selection = index;
+			self.set_highlighted_selection_index();
+			Ok(())
+		} else {
+			anyhow::bail!("Could not select commit. It might not be loaded yet or it might be on a different branch.");
+		}
+	}
+
+	///
+	pub fn highlighted_selection_info(&self) -> (usize, usize) {
+		let amount = self
+			.highlights
+			.as_ref()
+			.map(|highlights| highlights.len())
+			.unwrap_or_default();
+		(self.highlighted_selection.unwrap_or_default(), amount)
+	}
+
+	fn set_highlighted_selection_index(&mut self) {
+		self.highlighted_selection =
+			self.highlights.as_ref().and_then(|highlights| {
+				highlights.iter().position(|entry| {
+					entry == &self.commits[self.selection]
+				})
+			});
+	}
+
+	const fn selection(&self) -> usize {
+		self.selection
+	}
+
+	/// will return view size or None before the first render
+	fn current_size(&self) -> Option<(u16, u16)> {
+		self.current_size.get()
+	}
+
+	#[allow(clippy::missing_const_for_fn)]
+	fn selection_max(&self) -> usize {
+		self.commits.len().saturating_sub(1)
+	}
+
+	fn selected_entry_marked(&self) -> bool {
+		self.selected_entry()
+			.and_then(|e| self.is_marked(&e.id))
+			.unwrap_or_default()
+	}
+
 	fn move_selection(&mut self, scroll: ScrollType) -> Result<bool> {
+		let needs_update = if self.items.highlighting() {
+			self.move_selection_highlighting(scroll)?
+		} else {
+			self.move_selection_normal(scroll)?
+		};
+
+		Ok(needs_update)
+	}
+
+	fn move_selection_highlighting(
+		&mut self,
+		scroll: ScrollType,
+	) -> Result<bool> {
+		let (current_index, selection_max) =
+			self.highlighted_selection_info();
+
+		let new_index = match scroll {
+			ScrollType::Up => current_index.saturating_sub(1),
+			ScrollType::Down => current_index.saturating_add(1),
+
+			//TODO: support this?
+			// ScrollType::Home => 0,
+			// ScrollType::End => self.selection_max(),
+			_ => return Ok(false),
+		};
+
+		let new_index =
+			cmp::min(new_index, selection_max.saturating_sub(1));
+
+		let index_changed = new_index != current_index;
+
+		if !index_changed {
+			return Ok(false);
+		}
+
+		let new_selected_commit =
+			self.highlights.as_ref().and_then(|highlights| {
+				highlights.iter().nth(new_index).copied()
+			});
+
+		if let Some(c) = new_selected_commit {
+			self.select_commit(c)?;
+			return Ok(true);
+		}
+
+		Ok(false)
+	}
+
+	fn move_selection_normal(
+		&mut self,
+		scroll: ScrollType,
+	) -> Result<bool> {
 		self.update_scroll_speed();
 
 		#[allow(clippy::cast_possible_truncation)]
@@ -235,7 +389,6 @@ impl CommitList {
 
 		let new_selection =
 			cmp::min(new_selection, self.selection_max());
-
 		let needs_update = new_selection != self.selection;
 
 		self.selection = new_selection;
@@ -297,6 +450,7 @@ impl CommitList {
 
 	#[allow(clippy::too_many_arguments)]
 	fn get_entry_to_add<'a>(
+		&self,
 		e: &'a LogEntry,
 		selected: bool,
 		tags: Option<String>,
@@ -311,9 +465,18 @@ impl CommitList {
 			ELEMENTS_PER_LINE + if marked.is_some() { 2 } else { 0 },
 		);
 
+		let normal = !self.items.highlighting()
+			|| (self.items.highlighting() && e.highlighted);
+
 		let splitter_txt = Cow::from(symbol::EMPTY_SPACE);
-		let splitter =
-			Span::styled(splitter_txt, theme.text(true, selected));
+		let splitter = Span::styled(
+			splitter_txt,
+			if normal {
+				theme.text(true, selected)
+			} else {
+				Style::default()
+			},
+		);
 
 		// marker
 		if let Some(marked) = marked {
@@ -328,18 +491,34 @@ impl CommitList {
 			txt.push(splitter.clone());
 		}
 
+		let style_hash = normal
+			.then(|| theme.commit_hash(selected))
+			.unwrap_or_else(|| theme.commit_unhighlighted());
+		let style_time = normal
+			.then(|| theme.commit_time(selected))
+			.unwrap_or_else(|| theme.commit_unhighlighted());
+		let style_author = normal
+			.then(|| theme.commit_author(selected))
+			.unwrap_or_else(|| theme.commit_unhighlighted());
+		let style_tags = normal
+			.then(|| theme.tags(selected))
+			.unwrap_or_else(|| theme.commit_unhighlighted());
+		let style_branches = normal
+			.then(|| theme.branch(selected, true))
+			.unwrap_or_else(|| theme.commit_unhighlighted());
+		let style_msg = normal
+			.then(|| theme.text(true, selected))
+			.unwrap_or_else(|| theme.commit_unhighlighted());
+
 		// commit hash
-		txt.push(Span::styled(
-			Cow::from(&*e.hash_short),
-			theme.commit_hash(selected),
-		));
+		txt.push(Span::styled(Cow::from(&*e.hash_short), style_hash));
 
 		txt.push(splitter.clone());
 
 		// commit timestamp
 		txt.push(Span::styled(
 			Cow::from(e.time_to_string(now)),
-			theme.commit_time(selected),
+			style_time,
 		));
 
 		txt.push(splitter.clone());
@@ -349,33 +528,23 @@ impl CommitList {
 		let author = string_width_align(&e.author, author_width);
 
 		// commit author
-		txt.push(Span::styled::<String>(
-			author,
-			theme.commit_author(selected),
-		));
+		txt.push(Span::styled::<String>(author, style_author));
 
 		txt.push(splitter.clone());
 
 		// commit tags
 		if let Some(tags) = tags {
 			txt.push(splitter.clone());
-			txt.push(Span::styled(tags, theme.tags(selected)));
+			txt.push(Span::styled(tags, style_tags));
 		}
 
 		if let Some(local_branches) = local_branches {
 			txt.push(splitter.clone());
-			txt.push(Span::styled(
-				local_branches,
-				theme.branch(selected, true),
-			));
+			txt.push(Span::styled(local_branches, style_branches));
 		}
-
 		if let Some(remote_branches) = remote_branches {
 			txt.push(splitter.clone());
-			txt.push(Span::styled(
-				remote_branches,
-				theme.branch(selected, true),
-			));
+			txt.push(Span::styled(remote_branches, style_branches));
 		}
 
 		txt.push(splitter);
@@ -387,7 +556,7 @@ impl CommitList {
 		// commit msg
 		txt.push(Span::styled(
 			format!("{:message_width$}", &e.msg),
-			theme.text(true, selected),
+			style_msg,
 		));
 
 		Line::from(txt)
@@ -428,57 +597,18 @@ impl CommitList {
 						.join(" ")
 				});
 
-			let remote_branches = self
-				.remote_branches
-				.get(&e.id)
-				.and_then(|remote_branches| {
-					let filtered_branches: Vec<_> = remote_branches
-						.iter()
-						.filter(|remote_branch| {
-							self.local_branches
-								.get(&e.id)
-								.map_or(true, |local_branch| {
-									local_branch.iter().any(
-										|local_branch| {
-											let has_corresponding_local_branch = match &local_branch.details {
-												BranchDetails::Local(details) =>
-													details
-														.upstream
-														.as_ref()
-														.map_or(false, |upstream| upstream.reference == remote_branch.reference),
-												BranchDetails::Remote(_) =>
-														false,
-											};
-
-											!has_corresponding_local_branch
-										},
-									)
-								})
-						})
-						.map(|remote_branch| {
-							format!("[{0}]", remote_branch.name)
-						})
-						.collect();
-
-					if filtered_branches.is_empty() {
-						None
-					} else {
-						Some(filtered_branches.join(" "))
-					}
-				});
-
 			let marked = if any_marked {
 				self.is_marked(&e.id)
 			} else {
 				None
 			};
 
-			txt.push(Self::get_entry_to_add(
+			txt.push(self.get_entry_to_add(
 				e,
 				idx + self.scroll_top.get() == selection,
 				tags,
 				local_branches,
-				remote_branches,
+				self.remote_branches_string(e),
 				&self.theme,
 				width,
 				now,
@@ -489,62 +619,159 @@ impl CommitList {
 		txt
 	}
 
+	fn remote_branches_string(&self, e: &LogEntry) -> Option<String> {
+		self.remote_branches.get(&e.id).and_then(|remote_branches| {
+			let filtered_branches: Vec<_> = remote_branches
+				.iter()
+				.filter(|remote_branch| {
+					self.local_branches.get(&e.id).map_or(
+						true,
+						|local_branch| {
+							local_branch.iter().any(|local_branch| {
+								let has_corresponding_local_branch =
+									match &local_branch.details {
+										BranchDetails::Local(
+											details,
+										) => details
+											.upstream
+											.as_ref()
+											.map_or(
+												false,
+												|upstream| {
+													upstream.reference == remote_branch.reference
+												},
+											),
+										BranchDetails::Remote(_) => {
+											false
+										}
+									};
+
+								!has_corresponding_local_branch
+							})
+						},
+					)
+				})
+				.map(|remote_branch| {
+					format!("[{0}]", remote_branch.name)
+				})
+				.collect();
+
+			if filtered_branches.is_empty() {
+				None
+			} else {
+				Some(filtered_branches.join(" "))
+			}
+		})
+	}
+
 	#[allow(clippy::missing_const_for_fn)]
 	fn relative_selection(&self) -> usize {
 		self.selection.saturating_sub(self.items.index_offset())
 	}
 
-	pub fn select_entry(&mut self, position: usize) {
-		self.selection = position;
+	fn select_next_highlight(&mut self) {
+		if self.highlights.is_none() {
+			return;
+		}
+
+		let old_selection = self.selection;
+
+		let mut offset = 0;
+		loop {
+			let hit_upper_bound =
+				old_selection + offset > self.selection_max();
+			let hit_lower_bound = offset > old_selection;
+
+			if !hit_upper_bound {
+				self.selection = old_selection + offset;
+
+				if self.selection_highlighted() {
+					break;
+				}
+			}
+
+			if !hit_lower_bound {
+				self.selection = old_selection - offset;
+
+				if self.selection_highlighted() {
+					break;
+				}
+			}
+
+			if hit_lower_bound && hit_upper_bound {
+				self.selection = old_selection;
+				break;
+			}
+
+			offset += 1;
+		}
 	}
 
-	pub fn checkout(&mut self) {
-		if let Some(commit_hash) =
-			self.selected_entry().map(|entry| entry.id)
-		{
-			try_or_popup!(
-				self,
-				"failed to checkout commit:",
-				checkout_commit(&self.repo.borrow(), commit_hash)
+	fn selection_highlighted(&mut self) -> bool {
+		let commit = self.commits[self.selection];
+
+		self.highlights
+			.as_ref()
+			.is_some_and(|highlights| highlights.contains(&commit))
+	}
+
+	fn needs_data(&self, idx: usize, idx_max: usize) -> bool {
+		self.items.needs_data(idx, idx_max)
+	}
+
+	// checks if first entry in items is the same commit as we expect
+	fn is_list_in_sync(&self) -> bool {
+		self.items
+			.index_offset_raw()
+			.and_then(|index| {
+				self.items
+					.iter()
+					.next()
+					.map(|item| item.id == self.commits[index])
+			})
+			.unwrap_or_default()
+	}
+
+	fn fetch_commits(&mut self, force: bool) {
+		let want_min =
+			self.selection().saturating_sub(SLICE_SIZE / 2);
+		let commits = self.commits.len();
+
+		let want_min = want_min.min(commits);
+
+		let index_in_sync = self
+			.items
+			.index_offset_raw()
+			.is_some_and(|index| want_min == index);
+
+		if !index_in_sync || !self.is_list_in_sync() || force {
+			let commits = sync::get_commits_info(
+				&self.repo.borrow(),
+				self.commits
+					.iter()
+					.skip(want_min)
+					.take(SLICE_SIZE)
+					.copied()
+					.collect_vec()
+					.as_slice(),
+				self.current_size()
+					.map_or(100u16, |size| size.0)
+					.into(),
 			);
-		}
-	}
 
-	pub fn set_local_branches(
-		&mut self,
-		local_branches: Vec<BranchInfo>,
-	) {
-		self.local_branches.clear();
-
-		for local_branch in local_branches {
-			self.local_branches
-				.entry(local_branch.top_commit)
-				.or_default()
-				.push(local_branch);
-		}
-	}
-
-	pub fn set_remote_branches(
-		&mut self,
-		remote_branches: Vec<BranchInfo>,
-	) {
-		self.remote_branches.clear();
-
-		for remote_branch in remote_branches {
-			self.remote_branches
-				.entry(remote_branch.top_commit)
-				.or_default()
-				.push(remote_branch);
+			if let Ok(commits) = commits {
+				self.items.set_items(
+					want_min,
+					commits,
+					&self.highlights,
+				);
+			}
 		}
 	}
 }
 
 impl DrawableComponent for CommitList {
-	fn draw<B: Backend>(
-		&self,
-		f: &mut Frame<B>,
-		area: Rect,
-	) -> Result<()> {
+	fn draw(&self, f: &mut Frame, area: Rect) -> Result<()> {
 		let current_size = (
 			area.width.saturating_sub(2),
 			area.height.saturating_sub(2),
@@ -563,8 +790,8 @@ impl DrawableComponent for CommitList {
 		let title = format!(
 			"{} {}/{}",
 			self.title,
-			self.count_total.saturating_sub(self.selection),
-			self.count_total,
+			self.commits.len().saturating_sub(self.selection),
+			self.commits.len(),
 		);
 
 		f.render_widget(
@@ -591,7 +818,7 @@ impl DrawableComponent for CommitList {
 			f,
 			area,
 			&self.theme,
-			self.count_total,
+			self.commits.len(),
 			self.selection,
 			Orientation::Vertical,
 		);

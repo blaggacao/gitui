@@ -4,7 +4,6 @@ use anyhow::{bail, Result};
 use asyncgit::StatusItem;
 use std::{
 	collections::BTreeSet,
-	convert::TryFrom,
 	ffi::OsStr,
 	ops::{Index, IndexMut},
 	path::Path,
@@ -120,7 +119,7 @@ impl PartialOrd for FileTreeItem {
 		&self,
 		other: &Self,
 	) -> Option<std::cmp::Ordering> {
-		self.info.full_path.partial_cmp(&other.info.full_path)
+		Some(self.cmp(other))
 	}
 }
 

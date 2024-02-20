@@ -8,6 +8,7 @@ pub mod branch;
 mod commit;
 mod commit_details;
 pub mod commit_files;
+mod commit_filter;
 mod commit_revert;
 mod commits_info;
 mod config;
@@ -49,6 +50,11 @@ pub use commit_details::{
 	get_commit_details, CommitDetails, CommitMessage, CommitSignature,
 };
 pub use commit_files::get_commit_files;
+pub use commit_filter::{
+	diff_contains_file, filter_commit_by_search, LogFilterSearch,
+	LogFilterSearchOptions, SearchFields, SearchOptions,
+	SharedCommitFilterFn,
+};
 pub use commit_revert::{commit_revert, revert_commit, revert_head};
 pub use commits_info::{
 	get_commit_info, get_commits_info, CommitId, CommitInfo,
@@ -60,11 +66,12 @@ pub use config::{
 pub use diff::get_diff_commit;
 pub use git2::BranchType;
 pub use hooks::{
-	hooks_commit_msg, hooks_post_commit, hooks_pre_commit, HookResult,
+	hooks_commit_msg, hooks_post_commit, hooks_pre_commit,
+	hooks_prepare_commit_msg, HookResult, PrepareCommitMsgSource,
 };
 pub use hunks::{reset_hunk, stage_hunk, unstage_hunk};
 pub use ignore::add_to_ignore;
-pub use logwalker::{diff_contains_file, LogWalker, LogWalkerFilter};
+pub use logwalker::LogWalker;
 pub use merge::{
 	abort_pending_rebase, abort_pending_state,
 	continue_pending_rebase, merge_branch, merge_commit, merge_msg,
@@ -95,8 +102,8 @@ pub use tags::{
 };
 pub use tree::{tree_file_content, tree_files, TreeFile};
 pub use utils::{
-	get_head, get_head_tuple, is_repo, repo_dir, stage_add_all,
-	stage_add_file, stage_addremoved, Head,
+	get_head, get_head_tuple, repo_dir, repo_open_error,
+	stage_add_all, stage_add_file, stage_addremoved, Head,
 };
 
 pub use git2::ResetType;
@@ -312,7 +319,7 @@ mod tests {
 		eprintln!("\n----\n{cmd}");
 	}
 
-	/// helper to fetch commmit details using log walker
+	/// helper to fetch commit details using log walker
 	pub fn get_commit_ids(
 		r: &Repository,
 		max_count: usize,

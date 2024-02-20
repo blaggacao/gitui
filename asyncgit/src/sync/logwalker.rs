@@ -1,11 +1,10 @@
-use super::CommitId;
-use crate::sync::RepoPath;
-use crate::{error::Result, sync::commit_files::get_commit_diff};
+#![allow(dead_code)]
+use super::{CommitId, SharedCommitFilterFn};
+use crate::error::Result;
 use git2::{Commit, Oid, Repository};
 use std::{
 	cmp::Ordering,
 	collections::{BinaryHeap, HashSet},
-	sync::Arc,
 };
 
 struct TimeOrderedCommit<'a>(Commit<'a>);
@@ -20,7 +19,7 @@ impl<'a> PartialEq for TimeOrderedCommit<'a> {
 
 impl<'a> PartialOrd for TimeOrderedCommit<'a> {
 	fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-		self.0.time().partial_cmp(&other.0.time())
+		Some(self.cmp(other))
 	}
 }
 
@@ -31,41 +30,12 @@ impl<'a> Ord for TimeOrderedCommit<'a> {
 }
 
 ///
-pub type LogWalkerFilter = Arc<
-	Box<dyn Fn(&Repository, &CommitId) -> Result<bool> + Send + Sync>,
->;
-
-///
-pub fn diff_contains_file(
-	repo_path: RepoPath,
-	file_path: String,
-) -> LogWalkerFilter {
-	Arc::new(Box::new(
-		move |repo: &Repository,
-		      commit_id: &CommitId|
-		      -> Result<bool> {
-			let diff = get_commit_diff(
-				&repo_path,
-				repo,
-				*commit_id,
-				Some(file_path.clone()),
-				None,
-			)?;
-
-			let contains_file = diff.deltas().len() > 0;
-
-			Ok(contains_file)
-		},
-	))
-}
-
-///
 pub struct LogWalker<'a> {
 	commits: BinaryHeap<TimeOrderedCommit<'a>>,
 	visited: HashSet<Oid>,
 	limit: usize,
 	repo: &'a Repository,
-	filter: Option<LogWalkerFilter>,
+	filter: Option<SharedCommitFilterFn>,
 }
 
 impl<'a> LogWalker<'a> {
@@ -86,8 +56,16 @@ impl<'a> LogWalker<'a> {
 	}
 
 	///
+	pub fn visited(&self) -> usize {
+		self.visited.len()
+	}
+
+	///
 	#[must_use]
-	pub fn filter(self, filter: Option<LogWalkerFilter>) -> Self {
+	pub fn filter(
+		self,
+		filter: Option<SharedCommitFilterFn>,
+	) -> Self {
 		Self { filter, ..self }
 	}
 
@@ -134,10 +112,15 @@ impl<'a> LogWalker<'a> {
 mod tests {
 	use super::*;
 	use crate::error::Result;
-	use crate::sync::RepoPath;
+	use crate::sync::commit_filter::{SearchFields, SearchOptions};
+	use crate::sync::tests::write_commit_file;
 	use crate::sync::{
 		commit, get_commits_info, stage_add_file,
 		tests::repo_init_empty,
+	};
+	use crate::sync::{
+		diff_contains_file, filter_commit_by_search, LogFilterSearch,
+		LogFilterSearchOptions, RepoPath,
 	};
 	use pretty_assertions::assert_eq;
 	use std::{fs::File, io::Write, path::Path};
@@ -224,9 +207,7 @@ mod tests {
 
 		let _third_commit_id = commit(&repo_path, "commit3").unwrap();
 
-		let repo_path_clone = repo_path.clone();
-		let diff_contains_baz =
-			diff_contains_file(repo_path_clone, "baz".into());
+		let diff_contains_baz = diff_contains_file("baz".into());
 
 		let mut items = Vec::new();
 		let mut walker = LogWalker::new(&repo, 100)?
@@ -241,8 +222,7 @@ mod tests {
 
 		assert_eq!(items.len(), 0);
 
-		let diff_contains_bar =
-			diff_contains_file(repo_path, "bar".into());
+		let diff_contains_bar = diff_contains_file("bar".into());
 
 		let mut items = Vec::new();
 		let mut walker = LogWalker::new(&repo, 100)?
@@ -252,5 +232,52 @@ mod tests {
 		assert_eq!(items.len(), 0);
 
 		Ok(())
+	}
+
+	#[test]
+	fn test_logwalker_with_filter_search() {
+		let (_td, repo) = repo_init_empty().unwrap();
+
+		write_commit_file(&repo, "foo", "a", "commit1");
+		let second_commit_id = write_commit_file(
+			&repo,
+			"baz",
+			"a",
+			"my commit msg (#2)",
+		);
+		write_commit_file(&repo, "foo", "b", "commit3");
+
+		let log_filter = filter_commit_by_search(
+			LogFilterSearch::new(LogFilterSearchOptions {
+				fields: SearchFields::MESSAGE_SUMMARY,
+				options: SearchOptions::FUZZY_SEARCH,
+				search_pattern: String::from("my msg"),
+			}),
+		);
+
+		let mut items = Vec::new();
+		let mut walker = LogWalker::new(&repo, 100)
+			.unwrap()
+			.filter(Some(log_filter));
+		walker.read(&mut items).unwrap();
+
+		assert_eq!(items.len(), 1);
+		assert_eq!(items[0], second_commit_id);
+
+		let log_filter = filter_commit_by_search(
+			LogFilterSearch::new(LogFilterSearchOptions {
+				fields: SearchFields::FILENAMES,
+				options: SearchOptions::FUZZY_SEARCH,
+				search_pattern: String::from("fo"),
+			}),
+		);
+
+		let mut items = Vec::new();
+		let mut walker = LogWalker::new(&repo, 100)
+			.unwrap()
+			.filter(Some(log_filter));
+		walker.read(&mut items).unwrap();
+
+		assert_eq!(items.len(), 2);
 	}
 }

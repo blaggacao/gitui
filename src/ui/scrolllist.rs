@@ -1,6 +1,5 @@
 use super::style::SharedTheme;
 use ratatui::{
-	backend::Backend,
 	buffer::Buffer,
 	layout::Rect,
 	style::Style,
@@ -8,7 +7,6 @@ use ratatui::{
 	widgets::{Block, Borders, List, ListItem, Widget},
 	Frame,
 };
-use std::iter::Iterator;
 
 ///
 struct ScrollableList<'b, L, S>
@@ -59,8 +57,8 @@ where
 	}
 }
 
-pub fn draw_list<'b, B: Backend, L, S>(
-	f: &mut Frame<B>,
+pub fn draw_list<'b, L, S>(
+	f: &mut Frame,
 	r: Rect,
 	title: &'b str,
 	items: L,
@@ -79,8 +77,8 @@ pub fn draw_list<'b, B: Backend, L, S>(
 	f.render_widget(list, r);
 }
 
-pub fn draw_list_block<'b, B: Backend, L, S>(
-	f: &mut Frame<B>,
+pub fn draw_list_block<'b, L, S>(
+	f: &mut Frame,
 	r: Rect,
 	block: Block<'b>,
 	items: L,

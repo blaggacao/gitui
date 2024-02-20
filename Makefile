@@ -2,11 +2,12 @@
 .PHONY: debug build-release release-linux-musl test clippy clippy-pedantic install install-debug
 
 ARGS=-l
-# ARGS=-l -d ~/code/extern/pbrt-v4
+# ARGS=-l -d ~/code/extern/kubernetes
+# ARGS=-l -d ~/code/extern/linux
 # ARGS=-l -d ~/code/git-bare-test.git -w ~/code/git-bare-test
 
 profile:
-	cargo run --features=timing,pprof -- ${ARGS}
+	sudo CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --features timing -- ${ARGS}
 
 run-timing:
 	cargo run --features=timing --release -- ${ARGS}
@@ -20,6 +21,7 @@ build-release:
 release-mac: build-release
 	strip target/release/gitui
 	otool -L target/release/gitui
+	ls -lisah target/release/gitui
 	mkdir -p release
 	tar -C ./target/release/ -czvf ./release/gitui-mac.tar.gz ./gitui
 	ls -lisah ./release/gitui-mac.tar.gz
@@ -29,7 +31,7 @@ release-win: build-release
 	tar -C ./target/release/ -czvf ./release/gitui-win.tar.gz ./gitui.exe
 	cargo install cargo-wix --version 0.3.3
 	cargo wix -p gitui --no-build --nocapture --output ./release/gitui.msi
-	ls -l ./release/gitui.msi 
+	ls -l ./release/gitui.msi
 
 release-linux-musl: build-linux-musl-release
 	strip target/x86_64-unknown-linux-musl/release/gitui
@@ -80,14 +82,19 @@ clippy-nightly:
 
 check: fmt clippy test deny
 
+check-nightly:
+	cargo +nightly c
+	cargo +nightly clippy --workspace --all-features
+	cargo +nightly t
+
 deny:
 	cargo deny check
 
 install:
-	cargo install --path "." --offline
+	cargo install --path "." --offline --locked
 
 install-timing:
-	cargo install --features=timing --path "." --offline
+	cargo install --features=timing --path "." --offline --locked
 
 licenses:
 	cargo bundle-licenses --format toml --output THIRDPARTY.toml

@@ -8,22 +8,19 @@ use super::{
 };
 use crate::{
 	accessors,
+	app::Environment,
 	keys::{key_match, SharedKeyConfig},
-	queue::Queue,
 	strings,
-	ui::style::SharedTheme,
 };
 use anyhow::Result;
 use asyncgit::{
-	sync::{CommitTags, RepoPathRef},
-	AsyncCommitFiles, AsyncGitNotification, CommitFilesParams,
+	sync::{commit_files::OldNew, CommitTags},
+	AsyncCommitFiles, CommitFilesParams,
 };
 use compare_details::CompareDetailsComponent;
-use crossbeam_channel::Sender;
 use crossterm::event::Event;
 use details::DetailsComponent;
 use ratatui::{
-	backend::Backend,
 	layout::{Constraint, Direction, Layout, Rect},
 	Frame,
 };
@@ -42,39 +39,18 @@ impl CommitDetailsComponent {
 	accessors!(self, [single_details, compare_details, file_tree]);
 
 	///
-	pub fn new(
-		repo: &RepoPathRef,
-		queue: &Queue,
-		sender: &Sender<AsyncGitNotification>,
-		theme: SharedTheme,
-		key_config: SharedKeyConfig,
-	) -> Self {
+	pub fn new(env: &Environment) -> Self {
 		Self {
-			single_details: DetailsComponent::new(
-				repo.clone(),
-				theme.clone(),
-				key_config.clone(),
-				false,
-			),
-			compare_details: CompareDetailsComponent::new(
-				repo.clone(),
-				theme.clone(),
-				false,
-			),
+			single_details: DetailsComponent::new(env, false),
+			compare_details: CompareDetailsComponent::new(env, false),
 			git_commit_files: AsyncCommitFiles::new(
-				repo.borrow().clone(),
-				sender,
+				env.repo.borrow().clone(),
+				&env.sender_git,
 			),
-			file_tree: StatusTreeComponent::new(
-				"",
-				false,
-				Some(queue.clone()),
-				theme,
-				key_config.clone(),
-			),
+			file_tree: StatusTreeComponent::new(env, "", false),
 			visible: false,
 			commit: None,
-			key_config,
+			key_config: env.key_config.clone(),
 		}
 	}
 
@@ -105,8 +81,10 @@ impl CommitDetailsComponent {
 			self.file_tree.set_commit(Some(id.id));
 
 			if let Some(other) = id.other {
-				self.compare_details
-					.set_commits(Some((id.id, other)));
+				self.compare_details.set_commits(Some(OldNew {
+					new: id.id,
+					old: other,
+				}));
 			} else {
 				self.single_details
 					.set_commit(Some(id.id), tags.clone());
@@ -156,16 +134,12 @@ impl CommitDetailsComponent {
 	}
 
 	fn is_compare(&self) -> bool {
-		self.commit.map(|p| p.other.is_some()).unwrap_or_default()
+		self.commit.is_some_and(|p| p.other.is_some())
 	}
 }
 
 impl DrawableComponent for CommitDetailsComponent {
-	fn draw<B: Backend>(
-		&self,
-		f: &mut Frame<B>,
-		rect: Rect,
-	) -> Result<()> {
+	fn draw(&self, f: &mut Frame, rect: Rect) -> Result<()> {
 		if !self.visible {
 			return Ok(());
 		}

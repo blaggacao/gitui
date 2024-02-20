@@ -1,8 +1,5 @@
 use crate::error::Result;
-use std::{
-	convert::TryFrom,
-	path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 /// holds the information shared among all `FileTreeItem` in a `FileTree`
 #[derive(Debug, Clone)]
@@ -202,7 +199,7 @@ impl PartialOrd for FileTreeItem {
 		&self,
 		other: &Self,
 	) -> Option<std::cmp::Ordering> {
-		self.info.full_path.partial_cmp(&other.info.full_path)
+		Some(self.cmp(other))
 	}
 }
 

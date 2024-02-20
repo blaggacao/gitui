@@ -1,6 +1,7 @@
 use asyncgit::sync::{CommitId, CommitInfo};
 use chrono::{DateTime, Duration, Local, NaiveDateTime, Utc};
-use std::slice::Iter;
+use indexmap::IndexSet;
+use std::{rc::Rc, slice::Iter};
 
 #[cfg(feature = "ghemoji")]
 use super::emoji::emojifi_string;
@@ -18,6 +19,7 @@ pub struct LogEntry {
 	//TODO: use tinyvec here
 	pub hash_short: BoxStr,
 	pub id: CommitId,
+	pub highlighted: bool,
 }
 
 impl From<CommitInfo> for LogEntry {
@@ -29,10 +31,12 @@ impl From<CommitInfo> for LogEntry {
 			if date.is_none() {
 				log::error!("error reading commit date: {hash_short} - timestamp: {}",c.time);
 			}
-			DateTime::<Local>::from(DateTime::<Utc>::from_utc(
-				date.unwrap_or_default(),
-				Utc,
-			))
+			DateTime::<Local>::from(
+				DateTime::<Utc>::from_naive_utc_and_offset(
+					date.unwrap_or_default(),
+					Utc,
+				),
+			)
 		};
 
 		let author = c.author;
@@ -49,6 +53,7 @@ impl From<CommitInfo> for LogEntry {
 			time,
 			hash_short,
 			id: c.id,
+			highlighted: false,
 		}
 	}
 }
@@ -74,18 +79,29 @@ impl LogEntry {
 ///
 #[derive(Default)]
 pub struct ItemBatch {
-	index_offset: usize,
+	index_offset: Option<usize>,
 	items: Vec<LogEntry>,
+	highlighting: bool,
 }
 
 impl ItemBatch {
 	fn last_idx(&self) -> usize {
-		self.index_offset + self.items.len()
+		self.index_offset() + self.items.len()
 	}
 
 	///
-	pub const fn index_offset(&self) -> usize {
+	pub fn index_offset(&self) -> usize {
+		self.index_offset.unwrap_or_default()
+	}
+
+	///
+	pub const fn index_offset_raw(&self) -> Option<usize> {
 		self.index_offset
+	}
+
+	///
+	pub const fn highlighting(&self) -> bool {
+		self.highlighting
 	}
 
 	/// shortcut to get an `Iter` of our internal items
@@ -93,9 +109,10 @@ impl ItemBatch {
 		self.items.iter()
 	}
 
-	/// clear curent list of items
+	/// clear current list of items
 	pub fn clear(&mut self) {
 		self.items.clear();
+		self.index_offset = None;
 	}
 
 	/// insert new batch of items
@@ -103,10 +120,25 @@ impl ItemBatch {
 		&mut self,
 		start_index: usize,
 		commits: Vec<CommitInfo>,
+		highlighted: &Option<Rc<IndexSet<CommitId>>>,
 	) {
-		self.items.clear();
-		self.items.extend(commits.into_iter().map(LogEntry::from));
-		self.index_offset = start_index;
+		self.clear();
+
+		if !commits.is_empty() {
+			self.items.extend(commits.into_iter().map(|c| {
+				let id = c.id;
+				let mut entry = LogEntry::from(c);
+				if highlighted.as_ref().is_some_and(|highlighted| {
+					highlighted.contains(&id)
+				}) {
+					entry.highlighted = true;
+				}
+				entry
+			}));
+
+			self.index_offset = Some(start_index);
+			self.highlighting = highlighted.is_some();
+		}
 	}
 
 	/// returns `true` if we should fetch updated list of items
@@ -117,9 +149,20 @@ impl ItemBatch {
 			.saturating_add(SLICE_OFFSET_RELOAD_THRESHOLD)
 			.min(idx_max);
 
-		let needs_data_top = want_min < self.index_offset;
+		let needs_data_top = want_min < self.index_offset();
 		let needs_data_bottom = want_max >= self.last_idx();
 		needs_data_bottom || needs_data_top
+	}
+}
+
+impl<'a> IntoIterator for &'a ItemBatch {
+	type IntoIter = std::slice::Iter<
+		'a,
+		crate::components::utils::logitems::LogEntry,
+	>;
+	type Item = &'a crate::components::utils::logitems::LogEntry;
+	fn into_iter(self) -> Self::IntoIter {
+		self.iter()
 	}
 }
 

@@ -1,4 +1,5 @@
 use crate::{
+	app::Environment,
 	components::{
 		commit_details::style::style_detail,
 		dialog_paragraph,
@@ -16,13 +17,11 @@ use asyncgit::sync::{
 };
 use crossterm::event::Event;
 use ratatui::{
-	backend::Backend,
 	layout::{Constraint, Direction, Layout, Rect},
 	style::{Modifier, Style},
 	text::{Line, Span, Text},
 	Frame,
 };
-use std::clone::Clone;
 use std::{borrow::Cow, cell::Cell};
 use sync::CommitTags;
 
@@ -45,22 +44,17 @@ type WrappedCommitMessage<'a> =
 
 impl DetailsComponent {
 	///
-	pub const fn new(
-		repo: RepoPathRef,
-		theme: SharedTheme,
-		key_config: SharedKeyConfig,
-		focused: bool,
-	) -> Self {
+	pub fn new(env: &Environment, focused: bool) -> Self {
 		Self {
-			repo,
+			repo: env.repo.clone(),
 			data: None,
 			tags: Vec::new(),
-			theme,
+			theme: env.theme.clone(),
 			focused,
 			scroll_to_bottom_next_draw: Cell::new(false),
 			current_width: Cell::new(0),
 			scroll: VerticalScroll::new(),
-			key_config,
+			key_config: env.key_config.clone(),
 		}
 	}
 
@@ -86,11 +80,20 @@ impl DetailsComponent {
 		message: &CommitMessage,
 		width: usize,
 	) -> WrappedCommitMessage<'_> {
-		let wrapped_title = textwrap::wrap(&message.subject, width);
+		let width = width.max(1);
+		let wrapped_title = bwrap::wrap!(&message.subject, width)
+			.lines()
+			.map(String::from)
+			.map(Cow::from)
+			.collect();
 
 		if let Some(ref body) = message.body {
 			let wrapped_message: Vec<Cow<'_, str>> =
-				textwrap::wrap(body, width).into_iter().collect();
+				bwrap::wrap!(body, width)
+					.lines()
+					.map(String::from)
+					.map(Cow::from)
+					.collect();
 
 			(wrapped_title, wrapped_message)
 		} else {
@@ -181,7 +184,7 @@ impl DetailsComponent {
 			if let Some(ref committer) = data.committer {
 				res.extend(vec![
 					Line::from(vec![
-						style_detail(&self.theme, &Detail::Commiter),
+						style_detail(&self.theme, &Detail::Committer),
 						Span::styled(
 							Cow::from(format!(
 								"{} <{}>",
@@ -251,11 +254,7 @@ impl DetailsComponent {
 }
 
 impl DrawableComponent for DetailsComponent {
-	fn draw<B: Backend>(
-		&self,
-		f: &mut Frame<B>,
-		rect: Rect,
-	) -> Result<()> {
+	fn draw(&self, f: &mut Frame, rect: Rect) -> Result<()> {
 		const CANSCROLL_STRING: &str = "[\u{2026}]";
 		const EMPTY_STRING: &str = "";
 
@@ -429,6 +428,10 @@ mod tests {
 			get_wrapped_lines(&message, 14),
 			vec!["Commit message"]
 		);
+		assert_eq!(
+			get_wrapped_lines(&message, 0),
+			vec!["Commit", "message"]
+		);
 
 		let message_with_newline =
 			CommitMessage::from("Commit message\n");
@@ -440,6 +443,10 @@ mod tests {
 		assert_eq!(
 			get_wrapped_lines(&message_with_newline, 14),
 			vec!["Commit message"]
+		);
+		assert_eq!(
+			get_wrapped_lines(&message, 0),
+			vec!["Commit", "message"]
 		);
 
 		let message_with_body = CommitMessage::from(
@@ -456,6 +463,13 @@ mod tests {
 		assert_eq!(
 			get_wrapped_lines(&message_with_body, 14),
 			vec!["Commit message", "First line", "Second line"]
+		);
+		assert_eq!(
+			get_wrapped_lines(&message_with_body, 7),
+			vec![
+				"Commit", "message", "First", "line", "Second",
+				"line"
+			]
 		);
 	}
 }

@@ -34,8 +34,8 @@ impl From<&GituiKeyEvent> for KeyEvent {
 	}
 }
 
-#[derive(Clone, Patch)]
-#[patch_derive(Deserialize)]
+#[derive(Debug, Clone, Patch)]
+#[patch_derive(Deserialize, Debug)]
 pub struct KeysList {
 	pub tab_status: GituiKeyEvent,
 	pub tab_log: GituiKeyEvent,
@@ -85,9 +85,12 @@ pub struct KeysList {
 	pub log_tag_commit: GituiKeyEvent,
 	pub log_mark_commit: GituiKeyEvent,
 	pub log_checkout_commit: GituiKeyEvent,
-	pub log_reset_comit: GituiKeyEvent,
-	pub log_reword_comit: GituiKeyEvent,
+	pub log_reset_commit: GituiKeyEvent,
+	pub log_reword_commit: GituiKeyEvent,
+	pub log_find: GituiKeyEvent,
+	pub find_commit_sha: GituiKeyEvent,
 	pub commit_amend: GituiKeyEvent,
+	pub toggle_signoff: GituiKeyEvent,
 	pub toggle_verify: GituiKeyEvent,
 	pub copy: GituiKeyEvent,
 	pub create_branch: GituiKeyEvent,
@@ -117,6 +120,8 @@ pub struct KeysList {
 	pub view_submodule_parent: GituiKeyEvent,
 	pub update_submodule: GituiKeyEvent,
 	pub commit_history_next: GituiKeyEvent,
+	pub commit: GituiKeyEvent,
+	pub newline: GituiKeyEvent,
 }
 
 #[rustfmt::skip]
@@ -171,9 +176,12 @@ impl Default for KeysList {
 			log_tag_commit: GituiKeyEvent::new(KeyCode::Char('t'),  KeyModifiers::empty()),
 			log_mark_commit: GituiKeyEvent::new(KeyCode::Char(' '),  KeyModifiers::empty()),
 			log_checkout_commit: GituiKeyEvent { code: KeyCode::Char('S'), modifiers: KeyModifiers::SHIFT },
-			log_reset_comit: GituiKeyEvent { code: KeyCode::Char('R'), modifiers: KeyModifiers::SHIFT },
-			log_reword_comit: GituiKeyEvent { code: KeyCode::Char('r'), modifiers: KeyModifiers::empty() },
+			log_reset_commit: GituiKeyEvent { code: KeyCode::Char('R'), modifiers: KeyModifiers::SHIFT },
+			log_reword_commit: GituiKeyEvent { code: KeyCode::Char('r'), modifiers: KeyModifiers::empty() },
+			log_find: GituiKeyEvent { code: KeyCode::Char('f'), modifiers: KeyModifiers::empty() },
+			find_commit_sha: GituiKeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL),
 			commit_amend: GituiKeyEvent::new(KeyCode::Char('a'),  KeyModifiers::CONTROL),
+			toggle_signoff: GituiKeyEvent::new(KeyCode::Char('s'),  KeyModifiers::CONTROL),
 			toggle_verify: GituiKeyEvent::new(KeyCode::Char('f'),  KeyModifiers::CONTROL),
 			copy: GituiKeyEvent::new(KeyCode::Char('y'),  KeyModifiers::empty()),
 			create_branch: GituiKeyEvent::new(KeyCode::Char('c'),  KeyModifiers::empty()),
@@ -203,6 +211,8 @@ impl Default for KeysList {
 			view_submodule_parent: GituiKeyEvent::new(KeyCode::Char('p'),  KeyModifiers::empty()),
 			update_submodule: GituiKeyEvent::new(KeyCode::Char('u'),  KeyModifiers::empty()),
 			commit_history_next: GituiKeyEvent::new(KeyCode::Char('n'),  KeyModifiers::CONTROL),
+			commit: GituiKeyEvent::new(KeyCode::Char('d'),  KeyModifiers::CONTROL),
+			newline: GituiKeyEvent::new(KeyCode::Enter,  KeyModifiers::empty()),
 		}
 	}
 }
@@ -211,8 +221,11 @@ impl KeysList {
 	pub fn init(file: PathBuf) -> Self {
 		let mut keys_list = Self::default();
 		if let Ok(f) = File::open(file) {
-			if let Ok(patch) = ron::de::from_reader(f) {
-				keys_list.apply(patch);
+			match ron::de::from_reader(f) {
+				Ok(patch) => keys_list.apply(patch),
+				Err(e) => {
+					log::error!("KeysList parse error: {e}");
+				}
 			}
 		}
 		keys_list
@@ -242,11 +255,12 @@ mod tests {
 
 		writeln!(
 			file,
-			r"
+			r#"
 (
-	move_down: Some(( code: Char('j'), modifiers: ( bits: 2,),)),
+	move_down: Some(( code: Char('j'), modifiers: "CONTROL")),
+	move_up: Some((code: Char('h'), modifiers: ""))
 )
-"
+"#
 		)
 		.unwrap();
 
@@ -258,6 +272,13 @@ mod tests {
 			GituiKeyEvent::new(
 				KeyCode::Char('j'),
 				KeyModifiers::CONTROL
+			)
+		);
+		assert_eq!(
+			keys.move_up,
+			GituiKeyEvent::new(
+				KeyCode::Char('h'),
+				KeyModifiers::NONE
 			)
 		);
 	}

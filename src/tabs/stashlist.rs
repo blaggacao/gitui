@@ -1,13 +1,13 @@
 use crate::{
+	app::Environment,
 	components::{
 		visibility_blocking, CommandBlocking, CommandInfo,
 		CommitList, Component, DrawableComponent, EventState,
-		InspectCommitOpen,
 	},
 	keys::{key_match, SharedKeyConfig},
+	popups::InspectCommitOpen,
 	queue::{Action, InternalEvent, Queue, StackablePopupOpen},
 	strings,
-	ui::style::SharedTheme,
 };
 use anyhow::Result;
 use asyncgit::sync::{self, CommitId, RepoPath, RepoPathRef};
@@ -23,24 +23,16 @@ pub struct StashList {
 
 impl StashList {
 	///
-	pub fn new(
-		repo: RepoPathRef,
-		queue: &Queue,
-		theme: SharedTheme,
-		key_config: SharedKeyConfig,
-	) -> Self {
+	pub fn new(env: &Environment) -> Self {
 		Self {
 			visible: false,
 			list: CommitList::new(
-				repo.clone(),
-				&strings::stashlist_title(&key_config),
-				theme,
-				queue.clone(),
-				key_config.clone(),
+				env,
+				&strings::stashlist_title(&env.key_config),
 			),
-			queue: queue.clone(),
-			key_config,
-			repo,
+			queue: env.queue.clone(),
+			key_config: env.key_config.clone(),
+			repo: env.repo.clone(),
 		}
 	}
 
@@ -48,14 +40,7 @@ impl StashList {
 	pub fn update(&mut self) -> Result<()> {
 		if self.is_visible() {
 			let stashes = sync::get_stashes(&self.repo.borrow())?;
-			let commits = sync::get_commits_info(
-				&self.repo.borrow(),
-				stashes.as_slice(),
-				100,
-			)?;
-
-			self.list.set_count_total(commits.len());
-			self.list.items().set_items(0, commits);
+			self.list.set_commits(stashes.into_iter().collect());
 		}
 
 		Ok(())
@@ -65,7 +50,7 @@ impl StashList {
 		if let Some(e) = self.list.selected_entry() {
 			match sync::stash_apply(&self.repo.borrow(), e.id, false)
 			{
-				Ok(_) => {
+				Ok(()) => {
 					self.queue.push(InternalEvent::TabSwitchStatus);
 				}
 				Err(e) => {
@@ -143,14 +128,16 @@ impl StashList {
 		self.list.clear_marked();
 		self.update()?;
 
+		self.queue.push(InternalEvent::TabSwitchStatus);
+
 		Ok(())
 	}
 }
 
 impl DrawableComponent for StashList {
-	fn draw<B: ratatui::backend::Backend>(
+	fn draw(
 		&self,
-		f: &mut ratatui::Frame<B>,
+		f: &mut ratatui::Frame,
 		rect: ratatui::layout::Rect,
 	) -> Result<()> {
 		self.list.draw(f, rect)?;

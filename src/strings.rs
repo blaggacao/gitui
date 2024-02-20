@@ -7,8 +7,10 @@ use unicode_width::UnicodeWidthStr;
 use crate::keys::SharedKeyConfig;
 
 pub mod order {
-	pub static NAV: i8 = 2;
-	pub static RARE_ACTION: i8 = 1;
+	pub const RARE_ACTION: i8 = 30;
+	pub const NAV: i8 = 20;
+	pub const AVERAGE: i8 = 10;
+	pub const PRIORITY: i8 = 1;
 }
 
 pub static PUSH_POPUP_MSG: &str = "Push";
@@ -29,12 +31,13 @@ pub static PUSH_TAGS_STATES_DONE: &str = "done";
 
 pub static POPUP_TITLE_SUBMODULES: &str = "Submodules";
 pub static POPUP_TITLE_FUZZY_FIND: &str = "Fuzzy Finder";
+pub static POPUP_TITLE_LOG_SEARCH: &str = "Search";
 
 pub static POPUP_FAIL_COPY: &str = "Failed to copy text";
 pub static POPUP_SUCCESS_COPY: &str = "Copied Text";
+pub static POPUP_COMMIT_SHA_INVALID: &str = "Invalid commit sha";
 
 pub mod symbol {
-	pub const WHITESPACE: &str = "\u{00B7}"; //·
 	pub const CHECKMARK: &str = "\u{2713}"; //✓
 	pub const SPACE: &str = "\u{02FD}"; //˽
 	pub const EMPTY_SPACE: &str = " ";
@@ -127,9 +130,9 @@ pub const fn branch_name_invalid() -> &'static str {
 	"[invalid name]"
 }
 pub fn commit_editor_msg(_key_config: &SharedKeyConfig) -> String {
-	r##"
+	r"
 # Edit your commit message
-# Lines starting with '#' will be ignored"##
+# Lines starting with '#' will be ignored"
 		.to_string()
 }
 pub fn stash_popup_title(_key_config: &SharedKeyConfig) -> String {
@@ -140,6 +143,9 @@ pub fn stash_popup_msg(_key_config: &SharedKeyConfig) -> String {
 }
 pub fn confirm_title_reset() -> String {
 	"Reset".to_string()
+}
+pub fn confirm_title_undo_commit() -> String {
+	"Undo commit".to_string()
 }
 pub fn confirm_title_stashdrop(
 	_key_config: &SharedKeyConfig,
@@ -198,6 +204,9 @@ pub fn confirm_msg_reset_lines(lines: usize) -> String {
 	format!(
 		"are you sure you want to discard {lines} selected lines?"
 	)
+}
+pub fn confirm_msg_undo_commit() -> String {
+	"confirm undo last commit?".to_string()
 }
 pub fn confirm_msg_stashdrop(
 	_key_config: &SharedKeyConfig,
@@ -591,6 +600,18 @@ pub mod commands {
 			CMD_GROUP_LOG,
 		)
 	}
+	pub fn toggle_option(
+		key_config: &SharedKeyConfig,
+	) -> CommandText {
+		CommandText::new(
+			format!(
+				"Toggle Option [{}]",
+				key_config.get_hint(key_config.keys.log_mark_commit),
+			),
+			"toggle search option selected",
+			CMD_GROUP_LOG,
+		)
+	}
 	pub fn show_tag_annotation(
 		key_config: &SharedKeyConfig,
 	) -> CommandText {
@@ -943,13 +964,26 @@ pub mod commands {
 			CMD_GROUP_COMMIT_POPUP,
 		)
 	}
-	pub fn commit_enter(key_config: &SharedKeyConfig) -> CommandText {
+	pub fn commit_submit(
+		key_config: &SharedKeyConfig,
+	) -> CommandText {
 		CommandText::new(
 			format!(
-				"Commit [{}]",
-				key_config.get_hint(key_config.keys.enter),
+				"Do Commit [{}]",
+				key_config.get_hint(key_config.keys.commit),
 			),
 			"commit (available when commit message is non-empty)",
+			CMD_GROUP_COMMIT_POPUP,
+		)
+		.hide_help()
+	}
+	pub fn newline(key_config: &SharedKeyConfig) -> CommandText {
+		CommandText::new(
+			format!(
+				"New line [{}]",
+				key_config.get_hint(key_config.keys.newline),
+			),
+			"create line break",
 			CMD_GROUP_COMMIT_POPUP,
 		)
 		.hide_help()
@@ -977,6 +1011,18 @@ pub mod commands {
 				key_config.get_hint(key_config.keys.commit_amend),
 			),
 			"amend last commit (available in commit popup)",
+			CMD_GROUP_COMMIT_POPUP,
+		)
+	}
+	pub fn commit_signoff(
+		key_config: &SharedKeyConfig,
+	) -> CommandText {
+		CommandText::new(
+			format!(
+				"Sign-off [{}]",
+				key_config.get_hint(key_config.keys.toggle_signoff),
+			),
+			"sign-off commit (-s option)",
 			CMD_GROUP_COMMIT_POPUP,
 		)
 	}
@@ -1310,7 +1356,7 @@ pub mod commands {
 		CommandText::new(
 			format!(
 				"Reset [{}]",
-				key_config.get_hint(key_config.keys.log_reset_comit),
+				key_config.get_hint(key_config.keys.log_reset_commit),
 			),
 			"reset to commit",
 			CMD_GROUP_LOG,
@@ -1322,12 +1368,38 @@ pub mod commands {
 		CommandText::new(
 			format!(
 				"Reword [{}]",
-				key_config.get_hint(key_config.keys.log_reword_comit),
+				key_config
+					.get_hint(key_config.keys.log_reword_commit),
 			),
 			"reword commit message",
 			CMD_GROUP_LOG,
 		)
 	}
+	pub fn log_find_commit(
+		key_config: &SharedKeyConfig,
+	) -> CommandText {
+		CommandText::new(
+			format!(
+				"Find [{}]",
+				key_config.get_hint(key_config.keys.file_find),
+			),
+			"start commit search",
+			CMD_GROUP_LOG,
+		)
+	}
+	pub fn log_close_search(
+		key_config: &SharedKeyConfig,
+	) -> CommandText {
+		CommandText::new(
+			format!(
+				"Exit Search [{}]",
+				key_config.get_hint(key_config.keys.exit_popup),
+			),
+			"leave search mode",
+			CMD_GROUP_LOG,
+		)
+	}
+
 	pub fn reset_commit(key_config: &SharedKeyConfig) -> CommandText {
 		CommandText::new(
 			format!(
@@ -1617,6 +1689,19 @@ pub mod commands {
 			),
 			"fetch/prune",
 			CMD_GROUP_BRANCHES,
+		)
+	}
+
+	pub fn find_commit_sha(
+		key_config: &SharedKeyConfig,
+	) -> CommandText {
+		CommandText::new(
+			format!(
+				"Search Hash [{}]",
+				key_config.get_hint(key_config.keys.find_commit_sha),
+			),
+			"find commit from sha",
+			CMD_GROUP_LOG,
 		)
 	}
 }

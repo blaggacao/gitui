@@ -24,12 +24,23 @@ struct OptionsData {
 	pub commit_msgs: Vec<String>,
 }
 
-const COMMIT_MSG_HISTRY_LENGTH: usize = 20;
+const COMMIT_MSG_HISTORY_LENGTH: usize = 20;
 
 #[derive(Clone)]
 pub struct Options {
 	repo: RepoPathRef,
 	data: OptionsData,
+}
+
+#[cfg(test)]
+impl Options {
+	pub fn test_env() -> Self {
+		use asyncgit::sync::RepoPath;
+		Self {
+			repo: RefCell::new(RepoPath::Path(Default::default())),
+			data: Default::default(),
+		}
+	}
 }
 
 pub type SharedOptions = Rc<RefCell<Options>>;
@@ -98,7 +109,8 @@ impl Options {
 
 	pub fn add_commit_msg(&mut self, msg: &str) {
 		self.data.commit_msgs.push(msg.to_owned());
-		while self.data.commit_msgs.len() > COMMIT_MSG_HISTRY_LENGTH {
+		while self.data.commit_msgs.len() > COMMIT_MSG_HISTORY_LENGTH
+		{
 			self.data.commit_msgs.remove(0);
 		}
 		self.save();
@@ -145,7 +157,7 @@ impl Options {
 	fn save_failable(&self) -> Result<()> {
 		let dir = Self::options_file(&self.repo)?;
 
-		let mut file = File::create(&dir)?;
+		let mut file = File::create(dir)?;
 		let data =
 			to_string_pretty(&self.data, PrettyConfig::default())?;
 		file.write_all(data.as_bytes())?;

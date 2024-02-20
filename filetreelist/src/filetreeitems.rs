@@ -346,8 +346,7 @@ impl FileTreeItems {
 
 						if items
 							.get(i + 1)
-							.map(|item| item.kind().is_path())
-							.unwrap_or_default()
+							.is_some_and(|item| item.kind().is_path())
 						{
 							let next_item = items.remove(i + 1);
 							let item_mut = &mut items[i];
@@ -591,7 +590,7 @@ mod tests {
 		assert_eq!(it.next(), None);
 	}
 
-	pub fn get_visibles(tree: &FileTreeItems) -> Vec<bool> {
+	pub fn get_visible(tree: &FileTreeItems) -> Vec<bool> {
 		tree.tree_items
 			.iter()
 			.map(|e| e.info().is_visible())
@@ -615,7 +614,7 @@ mod tests {
 
 		tree.collapse(1, false);
 
-		let visibles = get_visibles(&tree);
+		let visibles = get_visible(&tree);
 
 		assert_eq!(
 			visibles,
@@ -629,7 +628,7 @@ mod tests {
 
 		tree.expand(1, false);
 
-		let visibles = get_visibles(&tree);
+		let visibles = get_visible(&tree);
 
 		assert_eq!(
 			visibles,
@@ -662,7 +661,7 @@ mod tests {
 		tree.collapse(0, false);
 
 		assert_eq!(
-			get_visibles(&tree),
+			get_visible(&tree),
 			vec![
 				true,  //
 				false, //
@@ -675,7 +674,7 @@ mod tests {
 		tree.expand(0, false);
 
 		assert_eq!(
-			get_visibles(&tree),
+			get_visible(&tree),
 			vec![
 				true,  //
 				true,  //
@@ -703,7 +702,7 @@ mod tests {
 
 		tree.collapse(0, false);
 
-		let visibles = get_visibles(&tree);
+		let visibles = get_visible(&tree);
 
 		assert_eq!(
 			visibles,
@@ -733,7 +732,7 @@ mod tests {
 
 		tree.collapse(1, false);
 
-		let visibles = get_visibles(&tree);
+		let visibles = get_visible(&tree);
 
 		assert_eq!(
 			visibles,
@@ -747,7 +746,7 @@ mod tests {
 
 		tree.collapse(0, false);
 
-		let visibles = get_visibles(&tree);
+		let visibles = get_visible(&tree);
 
 		assert_eq!(
 			visibles,
@@ -761,10 +760,10 @@ mod tests {
 
 		tree.expand(0, false);
 
-		let visibles = get_visibles(&tree);
+		let visible = get_visible(&tree);
 
 		assert_eq!(
-			visibles,
+			visible,
 			vec![
 				true,  //
 				true,  //
@@ -800,7 +799,7 @@ mod tests {
 		assert!(!tree.tree_items[3].kind().is_path_collapsed());
 
 		assert_eq!(
-			get_visibles(&tree),
+			get_visible(&tree),
 			vec![
 				true,  //
 				true,  //
@@ -829,7 +828,7 @@ mod tests {
 		tree.collapse(0, true);
 
 		assert_eq!(
-			get_visibles(&tree),
+			get_visible(&tree),
 			vec![
 				true,  //
 				false, //
@@ -841,7 +840,7 @@ mod tests {
 		assert_eq!(res, 2);
 
 		assert_eq!(
-			get_visibles(&tree),
+			get_visible(&tree),
 			vec![
 				true, //
 				true, //
@@ -873,7 +872,7 @@ mod tests {
 		assert_eq!(res, 4);
 
 		assert_eq!(
-			get_visibles(&tree),
+			get_visible(&tree),
 			vec![
 				true, //
 				true, //
@@ -899,7 +898,7 @@ mod tests {
 		tree.collapse(0, true);
 
 		assert_eq!(
-			get_visibles(&tree),
+			get_visible(&tree),
 			vec![
 				true,  //
 				false, //
@@ -912,7 +911,7 @@ mod tests {
 		assert!(!tree.tree_items[0].kind().is_path_collapsed());
 
 		assert_eq!(
-			get_visibles(&tree),
+			get_visible(&tree),
 			vec![
 				true, //
 				true, //

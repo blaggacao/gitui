@@ -1,7 +1,7 @@
 <h1 align="center">
 <img width="300px" src="assets/logo.png" />
 
-[![CI][s0]][l0] [![crates][s1]][l1] ![MIT][s2] [![UNSAFE][s3]][l3] [![ITCH][s4]][l4] [![DISC][s5]][l5] [![TWEET][s6]][l6]
+[![CI][s0]][l0] [![crates][s1]][l1] ![MIT][s2] [![UNSAFE][s3]][l3] [![ITCH][s4]][l4] [![TWEET][s6]][l6] [![dep_status][s7]][l7]
 
 </h1>
 
@@ -14,10 +14,10 @@
 [l3]: https://github.com/rust-secure-code/safety-dance/
 [s4]: https://img.shields.io/badge/itch.io-ok-green
 [l4]: https://extrawurst.itch.io/gitui
-[s5]: https://img.shields.io/discord/723083834811220028.svg?logo=chat
-[l5]: https://discord.gg/7TGFfuq
 [s6]: https://img.shields.io/twitter/follow/extrawurst?label=follow&style=social
 [l6]: https://twitter.com/intent/follow?screen_name=extrawurst
+[s7]: https://deps.rs/repo/github/extrawurst/gitui/status.svg
+[l7]: https://deps.rs/repo/github/extrawurst/gitui
 
 <h5 align="center">GitUI provides you with the comfort of a git GUI but right in your terminal</h1>
 
@@ -43,13 +43,13 @@
 
 - Fast and intuitive **keyboard only** control
 - Context based help (**no need to memorize** tons of hot-keys)
-- Inspect, commit, and amend changes (incl. hooks: _pre-commit_,_commit-msg_,_post-commit_)
+- Inspect, commit, and amend changes (incl. hooks: *pre-commit*,*commit-msg*,*post-commit*,*prepare-commit-msg*)
 - Stage, unstage, revert and reset files, hunks and lines
 - Stashing (save, pop, apply, drop, and inspect)
-- Push/Fetch to/from remote
+- Push / Fetch to / from remote
 - Branch List (create, rename, delete, checkout, remotes)
-- Browse commit log, diff committed changes
-- Scalable terminal UI layout
+- Browse / **Search** commit log, diff committed changes
+- Responsive terminal UI
 - Async git API for fluid control
 - Submodule support
 
@@ -75,7 +75,6 @@ For a [RustBerlin meetup presentation](https://youtu.be/rpilJV-eIVw?t=5334) ([sl
 
 These are the high level goals before calling out `1.0`:
 
-* log search (commit, author, sha) ([#449](https://github.com/extrawurst/gitui/issues/449),[#429](https://github.com/extrawurst/gitui/issues/429))
 * visualize branching structure in log tab ([#81](https://github.com/extrawurst/gitui/issues/81))
 * interactive rebase ([#32](https://github.com/extrawurst/gitui/issues/32))
 
@@ -94,22 +93,30 @@ All support is welcomed! Sponsors as well! ❤️
 
 ## 6. <a name="installation"></a> Installation <small><sup>[Top ▲](#table-of-contents)</sup></small>
 
-For the time being this product is in alpha and is not considered production ready. However, for personal use it is reasonably stable and is being used while developing itself.
+GitUI is in beta and may contain bugs and missing features. However, for personal use it is reasonably stable and is being used while developing itself.
 
-### [Arch Linux](https://archlinux.org/packages/community/x86_64/gitui/)
+<a href="https://repology.org/project/gitui/versions">
+    <img src="https://repology.org/badge/vertical-allrepos/gitui.svg" alt="Packaging status" align="right">
+</a>
+
+### Various Package Managers
+
+<details>
+  <summary>Install Instructions</summary>
+
+##### [Arch Linux](https://archlinux.org/packages/extra/x86_64/gitui/)
 
 ```sh
 pacman -S gitui
 ```
 
-### Fedora
+##### Fedora
 
 ```sh
 sudo dnf install gitui
 ```
 
-### Gentoo
-
+##### Gentoo
 Available in [dm9pZCAq overlay](https://github.com/gentoo-mirror/dm9pZCAq)
 
 ```sh
@@ -118,43 +125,43 @@ sudo emerge --sync dm9pZCAq
 sudo emerge dev-vcs/gitui::dm9pZCAq
 ```
 
-### [openSUSE](https://software.opensuse.org/package/gitui) (Tumbleweed)
+##### [openSUSE](https://software.opensuse.org/package/gitui)
 
 ```sh
 sudo zypper install gitui
 ```
 
-### Homebrew (macOS)
+##### Homebrew (macOS)
 
 ```sh
 brew install gitui
 ```
 
-### [MacPorts (macOS)](https://ports.macports.org/port/gitui/details/)
+##### [MacPorts (macOS)](https://ports.macports.org/port/gitui/details/)
 
 ```sh
 port install gitui
 ```
 
-### [Winget](https://github.com/microsoft/winget-pkgs/tree/master/manifests/s/StephanDilly/gitui) (Windows)
+##### [Winget](https://github.com/microsoft/winget-pkgs/tree/master/manifests/s/StephanDilly/gitui) (Windows)
 
 ```
 winget install gitui
 ```
 
-### [Scoop](https://github.com/ScoopInstaller/Main/blob/master/bucket/gitui.json) (Windows)
+##### [Scoop](https://github.com/ScoopInstaller/Main/blob/master/bucket/gitui.json) (Windows)
 
 ```
 scoop install gitui
 ```
 
-### [Chocolatey](https://chocolatey.org/packages/gitui) (Windows)
+##### [Chocolatey](https://chocolatey.org/packages/gitui) (Windows)
 
 ```
 choco install gitui
 ```
 
-### [Nix](https://search.nixos.org/packages?channel=unstable&show=gitui&from=0&size=50&sort=relevance&query=gitui) (Nix/NixOS)
+##### [Nix](https://search.nixos.org/packages?channel=unstable&show=gitui&from=0&size=50&sort=relevance&query=gitui) (Nix/NixOS)
 
 Nixpkg
 ```
@@ -165,13 +172,20 @@ NixOS
 nix-env -iA nixos.gitui
 ```
 
-### [Termux](https://github.com/termux/termux-packages/tree/master/packages/gitui) (Android)
+##### [Termux](https://github.com/termux/termux-packages/tree/master/packages/gitui) (Android)
 
 ```
 pkg install gitui
 ```
 
-## Release Binaries
+##### [Anaconda](https://anaconda.org/conda-forge/gitui)
+```
+conda install -c conda-forge gitui 
+```
+
+</details>
+
+### Release Binaries
 
 [Available for download in releases](https://github.com/extrawurst/gitui/releases)
 
@@ -201,7 +215,7 @@ All contain a single binary file
 
 ### Requirements
 
-- Minimum supported `rust`/`cargo` version: `1.65`
+- Minimum supported `rust`/`cargo` version: `1.70`
   - See [Install Rust](https://www.rust-lang.org/tools/install)
 
 - To build openssl dependency (see https://docs.rs/openssl/latest/openssl/)
@@ -251,10 +265,6 @@ The key bindings can be customized: See [Key Config](KEY_CONFIG.md) on how to se
 ## 12. <a name="sponsoring"></a> Sponsoring <small><sup>[Top ▲](#table-of-contents)</sup></small>
 
 [![github](https://img.shields.io/badge/-GitHub%20Sponsors-fafbfc?logo=GitHub%20Sponsors)](https://github.com/sponsors/extrawurst)
-
-<a href="https://liberapay.com/extrawurst/donate"><img alt="Donate using Liberapay" src="https://liberapay.com/assets/widgets/donate.svg"></a>
-
-<a href='https://ko-fi.com/B0B6GMW1T' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi4.png?v=3' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
 
 ## 13. <a name="inspiration"></a> Inspiration <small><sup>[Top ▲](#table-of-contents)</sup></small>
 

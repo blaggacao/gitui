@@ -3,6 +3,7 @@ use super::{
 	EventState,
 };
 use crate::{
+	app::Environment,
 	keys::SharedKeyConfig,
 	string_utils::tabs_to_spaces,
 	strings,
@@ -18,18 +19,16 @@ use asyncgit::{
 	sync::{self, RepoPathRef, TreeFile},
 	ProgressPercent,
 };
-use crossbeam_channel::Sender;
 use crossterm::event::Event;
 use filetreelist::MoveSelection;
 use itertools::Either;
 use ratatui::{
-	backend::Backend,
 	layout::Rect,
 	text::Text,
 	widgets::{Block, Borders, Wrap},
 	Frame,
 };
-use std::{cell::Cell, convert::From, path::Path};
+use std::{cell::Cell, path::Path};
 
 pub struct SyntaxTextComponent {
 	repo: RepoPathRef,
@@ -44,21 +43,18 @@ pub struct SyntaxTextComponent {
 
 impl SyntaxTextComponent {
 	///
-	pub fn new(
-		repo: RepoPathRef,
-		sender: &Sender<AsyncAppNotification>,
-		key_config: SharedKeyConfig,
-		theme: SharedTheme,
-	) -> Self {
+	pub fn new(env: &Environment) -> Self {
 		Self {
-			async_highlighting: AsyncSingleJob::new(sender.clone()),
+			async_highlighting: AsyncSingleJob::new(
+				env.sender_app.clone(),
+			),
 			syntax_progress: None,
 			current_file: None,
 			paragraph_state: Cell::new(ParagraphState::default()),
 			focused: false,
-			key_config,
-			theme,
-			repo,
+			key_config: env.key_config.clone(),
+			theme: env.theme.clone(),
+			repo: env.repo.clone(),
 		}
 	}
 
@@ -108,8 +104,7 @@ impl SyntaxTextComponent {
 		let already_loaded = self
 			.current_file
 			.as_ref()
-			.map(|(current_file, _)| current_file == &path)
-			.unwrap_or_default();
+			.is_some_and(|(current_file, _)| current_file == &path);
 
 		if !already_loaded {
 			//TODO: fetch file content async aswell
@@ -188,11 +183,7 @@ impl SyntaxTextComponent {
 }
 
 impl DrawableComponent for SyntaxTextComponent {
-	fn draw<B: Backend>(
-		&self,
-		f: &mut Frame<B>,
-		area: Rect,
-	) -> Result<()> {
+	fn draw(&self, f: &mut Frame, area: Rect) -> Result<()> {
 		let text = self.current_file.as_ref().map_or_else(
 			|| Text::from(""),
 			|(_, content)| match content {

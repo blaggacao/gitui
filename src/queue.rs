@@ -1,12 +1,15 @@
 use crate::{
-	components::{
+	components::FuzzyFinderTarget,
+	popups::{
 		AppOption, BlameFileOpen, FileRevOpen, FileTreeOpen,
-		FuzzyFinderTarget, InspectCommitOpen,
+		InspectCommitOpen,
 	},
 	tabs::StashingOptions,
 };
 use asyncgit::{
-	sync::{diff::DiffLinePosition, CommitId},
+	sync::{
+		diff::DiffLinePosition, CommitId, LogFilterSearchOptions,
+	},
 	PushType,
 };
 use bitflags::bitflags;
@@ -52,6 +55,7 @@ pub enum Action {
 	AbortMerge,
 	AbortRebase,
 	AbortRevert,
+	UndoCommit,
 }
 
 #[derive(Debug)]
@@ -66,6 +70,14 @@ pub enum StackablePopupOpen {
 	InspectCommit(InspectCommitOpen),
 	///
 	CompareCommits(InspectCommitOpen),
+}
+
+pub enum AppTabs {
+	Status,
+	Log,
+	Files,
+	Stashing,
+	Stashlist,
 }
 
 ///
@@ -88,6 +100,8 @@ pub enum InternalEvent {
 	PopupStashing(StashingOptions),
 	///
 	TabSwitchStatus,
+	///
+	TabSwitch(AppTabs),
 	///
 	SelectCommitInRevlog(CommitId),
 	///
@@ -113,6 +127,8 @@ pub enum InternalEvent {
 	///
 	OpenFuzzyFinder(Vec<String>, FuzzyFinderTarget),
 	///
+	OpenLogSearchPopup,
+	///
 	FuzzyFinderChanged(usize, String, FuzzyFinderTarget),
 	///
 	FetchRemotes,
@@ -130,6 +146,8 @@ pub enum InternalEvent {
 	OpenResetPopup(CommitId),
 	///
 	RewordCommit(CommitId),
+	///
+	CommitSearch(LogFilterSearchOptions),
 }
 
 /// single threaded simple queue for components to communicate with each other

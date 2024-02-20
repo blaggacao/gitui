@@ -4,8 +4,10 @@ use super::{
 	Direction, DrawableComponent, HorizontalScrollType, ScrollType,
 };
 use crate::{
+	app::Environment,
 	components::{CommandInfo, Component, EventState},
 	keys::{key_match, SharedKeyConfig},
+	options::SharedOptions,
 	queue::{Action, InternalEvent, NeedsUpdate, Queue, ResetItem},
 	string_utils::tabs_to_spaces,
 	string_utils::trim_offset,
@@ -21,7 +23,6 @@ use asyncgit::{
 use bytesize::ByteSize;
 use crossterm::event::Event;
 use ratatui::{
-	backend::Backend,
 	layout::Rect,
 	symbols,
 	text::{Line, Span},
@@ -117,20 +118,15 @@ pub struct DiffComponent {
 	theme: SharedTheme,
 	key_config: SharedKeyConfig,
 	is_immutable: bool,
+	options: SharedOptions,
 }
 
 impl DiffComponent {
 	///
-	pub fn new(
-		repo: RepoPathRef,
-		queue: Queue,
-		theme: SharedTheme,
-		key_config: SharedKeyConfig,
-		is_immutable: bool,
-	) -> Self {
+	pub fn new(env: &Environment, is_immutable: bool) -> Self {
 		Self {
 			focused: false,
-			queue,
+			queue: env.queue.clone(),
 			current: Current::default(),
 			pending: false,
 			selected_hunk: None,
@@ -140,18 +136,16 @@ impl DiffComponent {
 			selection: Selection::Single(0),
 			vertical_scroll: VerticalScroll::new(),
 			horizontal_scroll: HorizontalScroll::new(),
-			theme,
-			key_config,
+			theme: env.theme.clone(),
+			key_config: env.key_config.clone(),
 			is_immutable,
-			repo,
+			repo: env.repo.clone(),
+			options: env.options.clone(),
 		}
 	}
 	///
 	fn can_scroll(&self) -> bool {
-		self.diff
-			.as_ref()
-			.map(|diff| diff.lines > 1)
-			.unwrap_or_default()
+		self.diff.as_ref().is_some_and(|diff| diff.lines > 1)
 	}
 	///
 	pub fn current(&self) -> (String, bool) {
@@ -331,47 +325,12 @@ impl DiffComponent {
 	}
 
 	fn get_text(&self, width: u16, height: u16) -> Vec<Line> {
-		let mut res: Vec<Line> = Vec::new();
 		if let Some(diff) = &self.diff {
-			if diff.hunks.is_empty() {
-				let is_positive = diff.size_delta >= 0;
-				let delta_byte_size =
-					ByteSize::b(diff.size_delta.unsigned_abs());
-				let sign = if is_positive { "+" } else { "-" };
-				res.extend(vec![Line::from(vec![
-					Span::raw(Cow::from("size: ")),
-					Span::styled(
-						Cow::from(format!(
-							"{}",
-							ByteSize::b(diff.sizes.0)
-						)),
-						self.theme.text(false, false),
-					),
-					Span::raw(Cow::from(" -> ")),
-					Span::styled(
-						Cow::from(format!(
-							"{}",
-							ByteSize::b(diff.sizes.1)
-						)),
-						self.theme.text(false, false),
-					),
-					Span::raw(Cow::from(" (")),
-					Span::styled(
-						Cow::from(format!(
-							"{sign}{delta_byte_size:}"
-						)),
-						self.theme.diff_line(
-							if is_positive {
-								DiffLineType::Add
-							} else {
-								DiffLineType::Delete
-							},
-							false,
-						),
-					),
-					Span::raw(Cow::from(")")),
-				])]);
+			return if diff.hunks.is_empty() {
+				self.get_text_binary(diff)
 			} else {
+				let mut res: Vec<Line> = Vec::new();
+
 				let min = self.vertical_scroll.get_top();
 				let max = min + height as usize;
 
@@ -422,9 +381,44 @@ impl DiffComponent {
 						line_cursor += hunk_len;
 					}
 				}
-			}
+
+				res
+			};
 		}
-		res
+
+		vec![]
+	}
+
+	fn get_text_binary(&self, diff: &FileDiff) -> Vec<Line> {
+		let is_positive = diff.size_delta >= 0;
+		let delta_byte_size =
+			ByteSize::b(diff.size_delta.unsigned_abs());
+		let sign = if is_positive { "+" } else { "-" };
+		vec![Line::from(vec![
+			Span::raw(Cow::from("size: ")),
+			Span::styled(
+				Cow::from(format!("{}", ByteSize::b(diff.sizes.0))),
+				self.theme.text(false, false),
+			),
+			Span::raw(Cow::from(" -> ")),
+			Span::styled(
+				Cow::from(format!("{}", ByteSize::b(diff.sizes.1))),
+				self.theme.text(false, false),
+			),
+			Span::raw(Cow::from(" (")),
+			Span::styled(
+				Cow::from(format!("{sign}{delta_byte_size:}")),
+				self.theme.diff_line(
+					if is_positive {
+						DiffLineType::Add
+					} else {
+						DiffLineType::Delete
+					},
+					false,
+				),
+			),
+			Span::raw(Cow::from(")")),
+		])]
 	}
 
 	fn get_line_to_add<'a>(
@@ -437,6 +431,9 @@ impl DiffComponent {
 		scrolled_right: usize,
 	) -> Line<'a> {
 		let style = theme.diff_hunk_marker(selected_hunk);
+
+		let is_content_line =
+			matches!(line.line_type, DiffLineType::None);
 
 		let left_side_of_line = if end_of_hunk {
 			Span::styled(Cow::from(symbols::line::BOTTOM_LEFT), style)
@@ -454,7 +451,11 @@ impl DiffComponent {
 		};
 
 		let content =
-			tabs_to_spaces(line.content.as_ref().to_string());
+			if !is_content_line && line.content.as_ref().is_empty() {
+				theme.line_break()
+			} else {
+				tabs_to_spaces(line.content.as_ref().to_string())
+			};
 		let content = trim_offset(&content, scrolled_right);
 
 		let filled = if selected {
@@ -503,6 +504,7 @@ impl DiffComponent {
 					&self.repo.borrow(),
 					&self.current.path,
 					hash,
+					Some(self.options.borrow().diff_options()),
 				)?;
 				self.queue_update();
 			}
@@ -525,6 +527,7 @@ impl DiffComponent {
 						&self.repo.borrow(),
 						&self.current.path,
 						hash,
+						Some(self.options.borrow().diff_options()),
 					)?;
 				}
 
@@ -679,11 +682,7 @@ impl DiffComponent {
 }
 
 impl DrawableComponent for DiffComponent {
-	fn draw<B: Backend>(
-		&self,
-		f: &mut Frame<B>,
-		r: Rect,
-	) -> Result<()> {
+	fn draw(&self, f: &mut Frame, r: Rect) -> Result<()> {
 		self.current_size.set((
 			r.width.saturating_sub(2),
 			r.height.saturating_sub(2),
@@ -943,5 +942,77 @@ impl Component for DiffComponent {
 	}
 	fn focus(&mut self, focus: bool) {
 		self.focused = focus;
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::ui::style::Theme;
+	use std::io::Write;
+	use std::rc::Rc;
+	use tempfile::NamedTempFile;
+
+	#[test]
+	fn test_line_break() {
+		let diff_line = DiffLine {
+			content: "".into(),
+			line_type: DiffLineType::Add,
+			position: Default::default(),
+		};
+
+		{
+			let default_theme = Rc::new(Theme::default());
+
+			assert_eq!(
+				DiffComponent::get_line_to_add(
+					4,
+					&diff_line,
+					false,
+					false,
+					false,
+					&default_theme,
+					0
+				)
+				.spans
+				.last()
+				.unwrap(),
+				&Span::styled(
+					Cow::from("¶\n"),
+					default_theme
+						.diff_line(diff_line.line_type, false)
+				)
+			);
+		}
+
+		{
+			let mut file = NamedTempFile::new().unwrap();
+
+			writeln!(
+				file,
+				r#"
+(
+	line_break: Some("+")
+)
+"#
+			)
+			.unwrap();
+
+			let theme =
+				Rc::new(Theme::init(&file.path().to_path_buf()));
+
+			assert_eq!(
+				DiffComponent::get_line_to_add(
+					4, &diff_line, false, false, false, &theme, 0
+				)
+				.spans
+				.last()
+				.unwrap(),
+				&Span::styled(
+					Cow::from("+\n"),
+					theme.diff_line(diff_line.line_type, false)
+				)
+			);
+		}
 	}
 }

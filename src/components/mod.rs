@@ -1,85 +1,40 @@
-mod blame_file;
-mod branchlist;
 mod changes;
 mod command;
-mod commit;
 mod commit_details;
 mod commitlist;
-mod compare_commits;
-mod create_branch;
 mod cred;
 mod diff;
-mod externaleditor;
-mod fetch;
-mod file_revlog;
-mod fuzzy_find_popup;
-mod help;
-mod inspect_commit;
-mod msg;
-mod options_popup;
-mod pull;
-mod push;
-mod push_tags;
-mod rename_branch;
-mod reset;
-mod reset_popup;
 mod revision_files;
-mod revision_files_popup;
-mod stashmsg;
 mod status_tree;
-mod submodules;
 mod syntax_text;
-mod tag_commit;
-mod taglist;
 mod textinput;
 mod utils;
 
 pub use self::status_tree::StatusTreeComponent;
-pub use blame_file::{BlameFileComponent, BlameFileOpen};
-pub use branchlist::BranchListComponent;
 pub use changes::ChangesComponent;
 pub use command::{CommandInfo, CommandText};
-pub use commit::CommitComponent;
 pub use commit_details::CommitDetailsComponent;
 pub use commitlist::CommitList;
-pub use compare_commits::CompareCommitsComponent;
-pub use create_branch::CreateBranchComponent;
+pub use cred::CredComponent;
 pub use diff::DiffComponent;
-pub use externaleditor::ExternalEditorComponent;
-pub use fetch::FetchComponent;
-pub use file_revlog::{FileRevOpen, FileRevlogComponent};
-pub use fuzzy_find_popup::FuzzyFindPopup;
-pub use help::HelpComponent;
-pub use inspect_commit::{InspectCommitComponent, InspectCommitOpen};
-pub use msg::MsgComponent;
-pub use options_popup::{AppOption, OptionsPopupComponent};
-pub use pull::PullComponent;
-pub use push::PushComponent;
-pub use push_tags::PushTagsComponent;
-pub use rename_branch::RenameBranchComponent;
-pub use reset::ConfirmComponent;
-pub use reset_popup::ResetPopupComponent;
 pub use revision_files::RevisionFilesComponent;
-pub use revision_files_popup::{FileTreeOpen, RevisionFilesPopup};
-pub use stashmsg::StashMsgComponent;
-pub use submodules::SubmodulesListComponent;
 pub use syntax_text::SyntaxTextComponent;
-pub use tag_commit::TagCommitComponent;
-pub use taglist::TagListComponent;
 pub use textinput::{InputType, TextInputComponent};
-pub use utils::filetree::FileTreeItemKind;
+pub use utils::{
+	filetree::FileTreeItemKind, logitems::ItemBatch,
+	scroll_vertical::VerticalScroll, string_width_align,
+	time_to_string,
+};
 
 use crate::ui::style::Theme;
 use anyhow::Result;
 use crossterm::event::Event;
 use ratatui::{
-	backend::Backend,
 	layout::{Alignment, Rect},
 	text::{Span, Text},
-	widgets::{Block, BorderType, Borders, Paragraph, Wrap},
+	widgets::{Block, Borders, Paragraph},
 	Frame,
 };
-use std::convert::From;
 
 /// creates accessors for a list of components
 ///
@@ -116,7 +71,7 @@ macro_rules! any_popup_visible {
 #[macro_export]
 macro_rules! draw_popups {
     ($self:ident, [$($element:ident),+]) => {
-        fn draw_popups<B: Backend>(& $self, mut f: &mut Frame<B>) -> Result<()>{
+        fn draw_popups(& $self, mut f: &mut Frame) -> Result<()>{
             //TODO: move the layout part out and feed it into `draw_popups`
             let size = Layout::default()
             .direction(Direction::Vertical)
@@ -220,11 +175,7 @@ pub fn visibility_blocking<T: Component>(
 ///
 pub trait DrawableComponent {
 	///
-	fn draw<B: Backend>(
-		&self,
-		f: &mut Frame<B>,
-		rect: Rect,
-	) -> Result<()>;
+	fn draw(&self, f: &mut Frame, rect: Rect) -> Result<()>;
 }
 
 ///
@@ -310,31 +261,4 @@ fn dialog_paragraph<'a>(
 				.border_style(theme.block(focused)),
 		)
 		.alignment(Alignment::Left)
-}
-
-fn popup_paragraph<'a, T>(
-	title: &'a str,
-	content: T,
-	theme: &Theme,
-	focused: bool,
-	block: bool,
-) -> Paragraph<'a>
-where
-	T: Into<Text<'a>>,
-{
-	let paragraph = Paragraph::new(content.into())
-		.alignment(Alignment::Left)
-		.wrap(Wrap { trim: true });
-
-	if block {
-		paragraph.block(
-			Block::default()
-				.title(Span::styled(title, theme.title(focused)))
-				.borders(Borders::ALL)
-				.border_type(BorderType::Thick)
-				.border_style(theme.block(focused)),
-		)
-	} else {
-		paragraph
-	}
 }
